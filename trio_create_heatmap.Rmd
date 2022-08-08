@@ -1,0 +1,244 @@
+---
+title: "trio_fc_heatmaps"
+author: "Nawang Singhe & Peter Millar"
+date: "July 22, 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+# TRIO (LOG TRANSFORMED) MODELS 3-5
+# MAX: 3.013399 ***
+# MIN: -3.283873
+
+
+# PETMR (LOG TRANSFORMED) MODELS 3-5
+# MAX: 2.800222
+# MIN: -3.922643 ***
+
+# -4 TO +4 BOUNDARIES
+```
+
+
+#create raw heat maps
+```{r}
+# read csv files #
+# m3_raw_cent = read.csv("m3_raw_centiloid.csv", row.names = 1)
+# m3_log_cent = read.csv("m3_log_centiloid.csv", row.names = 1)
+# m3_raw_tau = read.csv("m3_raw_tau.csv", row.names = 1)
+# m3_log_tau = read.csv("m3_log_tau.csv", row.names = 1)
+
+
+bcyor = colorRampPalette(c("blue","cyan", "yellow", "orange", "red"))(256)
+bcyr = colorRampPalette(c("blue","cyan", "yellow", "red"))(256)
+bwr = colorRampPalette(c("blue", "white", "red"))(256)
+ry = colorRampPalette(c("red", "yellow"))(256)
+
+#m1 raw cent
+png("trio_mat1r.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat1r[c(nrow(trio_mat1r):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m2 raw tau
+png("trio_mat2r.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat2r[c(nrow(trio_mat2r):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 raw cent
+png("trio_mat3rcent.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat3rcent[c(nrow(trio_mat3rcent):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 raw tau
+png("trio_mat3rtau.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat3rtau[c(nrow(trio_mat3rtau):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m4 raw cont. interaxn
+png("trio_mat4r.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat4r[c(nrow(trio_mat4r):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3.1, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m5 raw bin. interaxn
+png("trio_mat5r.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat5r[c(nrow(trio_mat5r):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+
+```
+
+#create log heat maps
+```{r}
+#m1 log cent
+png("trio_mat1l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat1l[c(nrow(trio_mat1l):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3.3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m2 log tau
+png("trio_mat2l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat2l[c(nrow(trio_mat2l):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-3, 3.2, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 log cent
+png("trio_mat3lcent.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat3lcent[c(nrow(trio_mat3lcent):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          #col.regions = bcyr, at = seq(-3.3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 log tau
+png("trio_mat3ltau.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat3ltau[c(nrow(trio_mat3ltau):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          #col.regions = bcyr, at = seq(-3.3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m4 log cont. interaxn
+png("trio_mat4l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat4l[c(nrow(trio_mat4l):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          #col.regions = bcyr, at = seq(-3.3, 3, .1),  
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m5 log bin. interaxn
+png("trio_mat5l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_mat5l[c(nrow(trio_mat5l):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          #col.regions = bcyr, at = seq(-3.3, 3, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+```
+
+#create heat map of p-vals
+```{r}
+### pre correction ###
+#m3 log cent
+png("trio_pval3lcent.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_pval3lcent[c(nrow(trio_pval3lcent):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 log tau
+png("trio_pval3ltau.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_pval3ltau[c(nrow(trio_pval3ltau):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01),
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m4 log cont. interaxn
+png("trio_pval4l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_pval4l[c(nrow(trio_pval4l):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01),
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m5 log bin. interaxn
+png("trio_pval5l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(trio_pval5l[c(nrow(trio_pval5l):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01),
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+
+###post-correction
+
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -1,0 +1,3205 @@
+---
+title: "biomarker_fc_analyses"
+author: "Pete Millar & Nawang Singhe"
+date: '2022-06-27'
+output: html_document
+---
+#Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Clear workspace
+```{r}
+rm(list=ls())
+```
+
+##Load packages and set paths
+```{r}
+#install.packages("pacman")
+#load packages
+pacman::p_load(mclust,MineICA,sBIC, jtools, psych, cowplot, multcomp, ggplot2, patchwork, data.table, readxl, DescTools, lattice, tidyverse, boot, table1, ggpubr, effects, kableExtra, magick, webshot, install = TRUE)
+
+#set path (may change depending on what computer you are using)
+################
+# LOCAL PATH (Windows, Pete PC)
+################
+#base_path = "W:/"
+
+################
+# LOCAL PATH (Windows, Nawang PC)
+################
+base_path = "Z:/millarp"
+
+################
+# SERVER PATH
+################
+#base_path = "/data/nil-bluearc/ances/millarp"
+
+#Identify data paths
+df_path = file.path(base_path, "data/ADRC")
+
+out_path = file.path(base_path, "singhen/fc_project/analyses")
+
+fc_path = file.path(base_path,"fc_df_2207")
+
+```
+
+##Load data from data freezes
+```{r}
+#load raw data from df files
+df_tau = read_excel(file.path(df_path, "ADRC_DR_19_Imaging/KARI_DR19_AV1451.xlsx"))%>%
+  dplyr::mutate(MAPID = as.factor(MAP))%>%
+  dplyr::mutate(date_tau = PET_Date)%>%
+  dplyr::mutate(count = "1")%>%
+  dplyr::group_by(MAPID)%>%
+  dplyr::arrange(date_tau)%>%
+  dplyr::mutate(visit = cumsum(count))
+#df_tau$visit
+
+df_tau$num_tau_visits = NA
+for (i in c(1:length(df_tau$MAPID))){
+  sub = df_tau$MAPID[i]
+  scratch = subset(df_tau, MAPID == sub)
+  df_tau$num_tau_visits[i] = max(scratch$visit)
+  }
+
+df_clin = read_excel(file.path(df_path, "AD_DF_2022/module_freeze_nov21/clinical_core_nov21/mod_b4_cdr.xlsx"))%>%
+  mutate(MAPID = as.factor(ID))%>%
+  mutate(date_cdr = testdate)
+
+df_pib = read_excel(file.path(df_path, "ADRC_DR_19_Imaging/KARI_DR19_PIB.xlsx"))%>%
+  mutate(MAPID = as.factor(MAP))%>%
+  mutate(date_pib = PET_Date)
+
+df_av45 = read_excel(file.path(df_path, "ADRC_DR_19_Imaging/KARI_DR19_AV45.xlsx"))%>%
+  mutate(MAPID = as.factor(MAP))%>%
+  mutate(date_av45 = PET_Date)
+
+df_lumi = read_excel(file.path(df_path, "AD_DF_2022/module_freeze_nov21/fluid_biomarkers_nov21/csf_markers.xlsx"))%>%
+  mutate(MAPID = as.factor(ID))%>%
+  mutate(date_csf = CSF_LP_DATE) %>%
+  mutate(Lumi_AB4240_Ratio = (LUMIPULSE_CSF_AB42/LUMIPULSE_CSF_AB40))
+
+df_fc = read.csv(file.path(fc_path, "Ances298network_ADRC_PETMR_DF_2207.csv"))%>%
+  mutate(MAPID = as.factor(Map))%>%
+  mutate(date_fc = MR_Date)%>%
+  filter(usable_BOLD == "Yes")
+
+df_apoe = read_excel(file.path(df_path, "AD_DF_2022/module_freeze_nov21/genetics_nov21/apoe.xlsx"))%>%
+  mutate(MAPID = as.factor(ID))
+
+#SANITY CHECK FOR FIXING PEOPLE NOT BORN YET
+#class(df_fc$BIRTH)
+df_fc$BIRTH = as.Date(df_fc$BIRTH, format = "%m/%d/%Y")
+min(as.Date(df_fc$BIRTH))
+as.Date(df_fc$date_fc, format = "%m/%d/%Y")
+as.Date(df_tau$date_tau)
+
+
+plot(df_fc$BOLD_time_remaining ~ df_fc$mean_FD_pre_threshold, xlim = c(0,.5))
+
+```
+##Merge data
+```{r}
+#Merge tau with clinical
+tau_data_merge <- merge(df_tau, df_clin, by="MAPID", all.x = TRUE) %>%
+  mutate(abs_diff_cdr=abs(as.Date(date_cdr)-as.Date(date_tau))) %>%
+  #filter(abs_diff_cdr < (365.25*3)) %>% 
+  arrange(abs_diff_cdr) %>% 
+  dplyr::group_by(MAPID, date_tau) %>% 
+  dplyr::slice(1) 
+
+#Add amyloid pet (PIB and AV5)
+tau_data_merge <- merge(tau_data_merge, df_pib, by="MAPID", all.x = TRUE) %>%
+  mutate(abs_diff_pib=abs(as.Date(date_pib)-as.Date(date_tau))) %>%
+  #filter(abs_diff < (365.25*3)) %>% 
+  arrange(abs_diff_pib) %>% 
+  dplyr::group_by(MAPID, date_tau) %>% 
+  dplyr::slice(1) 
+
+tau_data_merge <- merge(tau_data_merge, df_av45, by="MAPID", all.x = TRUE) %>%
+  mutate(abs_diff_av45=abs(as.Date(date_av45)-as.Date(date_tau))) %>%
+  #filter(abs_diff < (365.25*3)) %>% 
+  arrange(abs_diff_av45) %>% 
+  dplyr::group_by(MAPID, date_tau) %>% 
+  dplyr::slice(1) 
+
+tau_data_merge <- merge(tau_data_merge, df_lumi, by="MAPID", all.x = TRUE) %>%
+  mutate(abs_diff_csf=abs(as.Date(date_csf)-as.Date(date_tau))) %>%
+  #filter(abs_diff < (365.25*3)) %>% 
+  arrange(abs_diff_csf) %>% 
+  dplyr::group_by(MAPID, date_tau) %>% 
+  dplyr::slice(1) 
+
+tau_data_merge <- merge(tau_data_merge, df_fc, by="MAPID", all.x = TRUE) %>%
+  mutate(abs_diff_fc=abs(as.Date(date_fc,format = "%m/%d/%Y")-as.Date(date_tau))) %>%
+  #filter(abs_diff < (365.25*3)) %>% 
+  arrange(abs_diff_fc) %>% 
+  dplyr::group_by(MAPID, date_tau) %>% 
+  dplyr::slice(1) 
+
+tau_data_merge <- merge(tau_data_merge, df_apoe, by="MAPID", all.x = TRUE) #%>%
+  #dplyr::group_by(MAPID, date_tau) %>% 
+  #dplyr::slice(1) 
+
+#as.numeric(tau_data_merge$abs_diff_fc)
+
+#Dimensions should be 729 obs of 3386 variables (as of 6/28)
+
+```
+
+##Transform variables
+```{r}
+tau_data_merge$cdr_pos <- cut(tau_data_merge$cdr, breaks = c(-Inf, 0, +Inf), labels = c("0", "1"))
+tau_data_merge$pib_pos <- cut(tau_data_merge$pib_fsuvr_rsf_tot_cortmean, breaks = c(-Inf, 1.42, +Inf), labels = c("Aneg", "Apos"))
+tau_data_merge$av45_pos <- cut(tau_data_merge$av45_fsuvr_rsf_tot_cortmean, breaks = c(-Inf, 1.19, +Inf), labels = c("Aneg", "Apos"))
+#tau_data_merge$csf_pos <- cut(tau_data_merge$Lumi_AB4240_Ratio, breaks = c(-Inf, 0.0674, +Inf), labels = c("Apos", "Aneg"))
+
+#tau_data_merge$Centiloid_AV45_fSUVR_rsf_TOT_CORTMEAN
+#tau_data_merge$Centiloid_PiB_fSUVR_rsf_TOT_CORTMEAN
+#i = 3
+#Compare AV45 and PIB. Use whichever is a closer match in time to tau PET scan
+for (i in c(1:length(tau_data_merge$MAPID))){
+  if(is.na(tau_data_merge$abs_diff_av45[i])){
+    tau_data_merge$Centiloid_merge[i] = tau_data_merge$Centiloid_PiB_fSUVR_rsf_TOT_CORTMEAN[i]
+    tau_data_merge$abs_diff_cent[i] = tau_data_merge$abs_diff_pib[i]
+    tau_data_merge$cent_tracer[i] = "PiB"
+  }
+  if(is.na(tau_data_merge$abs_diff_pib[i])){
+    tau_data_merge$Centiloid_merge[i] = tau_data_merge$Centiloid_AV45_fSUVR_rsf_TOT_CORTMEAN[i]
+    tau_data_merge$abs_diff_cent[i] = tau_data_merge$abs_diff_av45[i]
+    tau_data_merge$cent_tracer[i] = "AV45"
+  }
+  if(is.na(tau_data_merge$abs_diff_pib[i]) & is.na(tau_data_merge$abs_diff_av45[i])){
+      tau_data_merge$Centiloid_merge[i] = NA
+      tau_data_merge$abs_diff_cent[i] = NA
+      tau_data_merge$cent_tracer[i] = NA
+  }
+  if(is.na(tau_data_merge$abs_diff_pib[i])==FALSE & is.na(tau_data_merge$abs_diff_av45[i])==FALSE){
+    if(tau_data_merge$abs_diff_pib[i] < tau_data_merge$abs_diff_av45[i]){
+      tau_data_merge$Centiloid_merge[i] = tau_data_merge$Centiloid_PiB_fSUVR_rsf_TOT_CORTMEAN[i]
+      tau_data_merge$abs_diff_cent[i] = tau_data_merge$abs_diff_pib[i]
+      tau_data_merge$cent_tracer[i] = "PiB"
+    }
+    if(tau_data_merge$abs_diff_pib[i] > tau_data_merge$abs_diff_av45[i]){
+      tau_data_merge$Centiloid_merge[i] = tau_data_merge$Centiloid_AV45_fSUVR_rsf_TOT_CORTMEAN[i]
+      tau_data_merge$abs_diff_cent[i] = tau_data_merge$abs_diff_av45[i]
+      tau_data_merge$cent_tracer[i] = "AV45"
+    }
+    if(tau_data_merge$abs_diff_pib[i] == tau_data_merge$abs_diff_av45[i]){
+      tau_data_merge$Centiloid_merge[i] = tau_data_merge$Centiloid_AV45_fSUVR_rsf_TOT_CORTMEAN[i]
+      tau_data_merge$abs_diff_cent[i] = tau_data_merge$abs_diff_av45[i]
+      tau_data_merge$cent_tracer[i] = "AV45"
+    }
+  }
+}
+#apoe
+tau_data_merge$newAPOE = recode_factor(tau_data_merge$apoe,
+                                          '22' = 'E4-',
+                                          '23' = 'E4-',
+                                          '24' = 'E4+',
+                                          '33' = 'E4-',
+                                          '34' = 'E4+',
+                                          '44' = 'E4+')
+
+plot(tau_data_merge$Centiloid_PiB_fSUVR_rsf_TOT_CORTMEAN ~ tau_data_merge$Centiloid_AV45_fSUVR_rsf_TOT_CORTMEAN
+     , ylab = "PIB Centiloid", xlab = "AV45 Centiloid")
+plot(tau_data_merge$Centiloid_merge ~ tau_data_merge$Centiloid_PiB_fSUVR_rsf_TOT_CORTMEAN
+     , ylab = "Merged Centiloid", xlab = "PIB Centiloid")
+plot(tau_data_merge$Centiloid_merge ~ tau_data_merge$Centiloid_AV45_fSUVR_rsf_TOT_CORTMEAN
+     , ylab = "Merged Centiloid", xlab = "AV45 Centiloid")
+table(tau_data_merge$cent_tracer)
+
+
+```
+##Exclude unusuable data points
+```{r}
+hist(as.numeric(tau_data_merge$abs_diff_cdr)/365.25
+     , xlab = "Years", main = "Tau-CDR time difference")
+  abline(v = 4, col = 'red')
+
+hist(tau_data_merge$abs_diff_cent/365.25
+     , xlab = "Years", main = "Tau-Centiloid time difference")
+  abline(v = 4, col = 'red')
+
+hist(as.numeric(tau_data_merge$abs_diff_fc)/365.25
+     , xlab = "Years", main = "Tau-FC time difference")
+  abline(v = 4, col = 'red')
+
+#Exclude participants with > 4 year delay between critical measures
+data = tau_data_merge%>%
+  filter(abs_diff_cdr < (365.25*4))%>%
+  filter(abs_diff_cent < (365.25*4))%>%
+  filter(abs_diff_fc < (365.25*4))%>%
+  filter(is.na(Tauopathy)==FALSE)%>% #Exclude participants missing "Tauopathy" summary
+  filter(is.na(Centiloid_merge)==FALSE)
+
+hist(data$BOLD_time_remaining/60
+     , xlab = "Minutes", main = "BOLD Time Remaining")
+hist(data$mean_FD_pre_threshold
+     , xlab = "mm", main = "Mean Framewise Displacement")
+
+data = data%>%
+  dplyr::mutate(count_final = "1")%>%
+  dplyr::group_by(MAPID)%>%
+  dplyr::arrange(date_tau)%>%
+  dplyr::mutate(visit_final = cumsum(count_final))
+
+#Check CDR and exclude cognitively impaired
+table(data$CDR, data$visit_final)
+
+data = data%>%
+  filter(CDR == 0)%>%
+  filter(visit_final == 1)
+
+#FINAL SAMPLE = 187
+
+hist(data$Tauopathy,
+     xlab = "SUVR", main = "Tau PET Summary")
+  abline(v = 1.22, col = 'red')
+hist(data$Centiloid_merge,
+     xlab = "Centiloid", main = "Amyloid PET Summary")
+  abline(v = 20.6, col = 'red')
+  
+
+plot(data$Tauopathy ~ data$Centiloid_merge, 
+     xlab = "Amyloid", ylab = "Tau", main = "Tau vs. Amyloid PET")
+  abline(h = 1.22, col = 'red')
+  abline(v = 20.6, col = 'red')
+
+```
+#Demographics table
+```{r}
+#Mean and SD of demographic summary measures
+##Age, Education, Sex, Race, APOE carriers, MMSE
+
+#Age
+data2 <- data %>%
+  mutate(age_tau=abs(as.Date(BIRTH,format = "%m/%d/%Y")-as.Date(date_tau,format = "%m/%d/%Y"))/365.25)
+  #age_tau = age_tau/365.25
+data2$age_tau <- as.numeric(data2$age_tau)
+#hist(data2$age_tau,
+#     xlab = "years", main = "age dist.",
+#     breaks = 50)
+#Education
+data2$EDUC
+#Sex
+data2$GENDER <- factor(data2$GENDER, levels = c(1,2), labels = c("Male", "Female"))
+#APOE Carriers
+data2$newAPOE
+#MMSE
+data2$MMSE.x
+#Race
+data2$race2 <- factor(data2$race2, levels = c(1,2,3,4,5,6), labels = c("American Indian or Alaska Native", "Asian", "Native Hawaiian or Other Pacific Islander", "Black", "White", "More than one race"))
+# data2$newRace = recode_factor(data2$race2,
+#               '1' = 'American Indian or Alaska Native',
+#               '2' = 'Asian',
+#               '3' = 'Native Hawaiian or Other Pacific Islander',
+#               '4' = 'Black',
+#               '5' = 'White',
+#               '6' = 'More than one race')
+
+#Format Table
+label(data2$age_tau) <- "Age"
+label(data2$EDUC) <- "Years of Education"
+label(data2$GENDER) <- "Sex"
+label(data2$newAPOE) <- "APOE E4 Carrier Status"
+label(data2$MMSE.x) <- "MMSE Score"
+label(data2$race2) <- "Race"
+table1(~age_tau + + EDUC + GENDER + newAPOE + MMSE.x + race2, data2, overall = "Total")
+
+```
+
+#Analyses (DMN x DMN FC)
+```{r}
+#For each model include: 
+    ##linear regression lm()
+      ##With covariates (age, sex, education, mean_pre_FD)
+    ##scatter plots of FC predicted by tau, centiloid, and or interaction
+```
+
+##Model 1 - FC ~ Centiloid (and covariates)
+```{r}
+#linear regression
+hist(data2$DMN_x_DMN)
+hist(data2$Centiloid_merge
+     ,main="Distribution of subjects by Centiloid"
+     ,xlab="Centiloid", ylab="Frequency")
+
+model1_dmn = lm(DMN_x_DMN ~ Centiloid_merge 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model1_dmn)
+
+#linear regression with log transformation
+maxNeg = min(data2$Centiloid_merge)
+# data2 %>%
+#   mutate(logCentiloid = log(Centiloid_merge - maxNeg)) -> data2
+# data2$logCentiloid
+# logmodel1_dmn = lm(DMN_x_DMN ~ logCentiloid 
+#                 + age_tau 
+#                 + EDUC 
+#                 + GENDER 
+#                 + mean_FD_pre_threshold
+#                 , data = data2)
+# summary(logmodel1_dmn)
+# hist(data2$logCentiloid)
+
+data2 %>%
+  mutate(logCentiloidplus = log(Centiloid_merge - maxNeg + 3)) -> data2
+
+logmodel1p_dmn = lm(DMN_x_DMN ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+hist(data2$logCentiloidplus
+     ,main="Distribution of subjects after log transformation"
+     ,xlab="log Centiloid",ylab="Frequency")
+summary(logmodel1p_dmn)
+
+
+data2 %>%
+  mutate(logCentiloidpluspoint1 = log(Centiloid_merge - maxNeg + 0.1)) -> data2
+hist(data2$logCentiloidpluspoint1)
+
+
+# #linear regression with sqrt transformation
+# mutate(data2, sq = sqrt(Centiloid_merge - maxNeg)) -> data2
+# hist(data2$sq)
+# 
+# sqmodel1_dmn = lm(DMN_x_DMN ~ sq 
+#                 + age_tau 
+#                 + EDUC 
+#                 + GENDER 
+#                 + mean_FD_pre_threshold
+#                 , data = data2)
+# summary(sqmodel1_dmn)
+# #sqrt is better than log for normalization
+# 
+# #linear regression with cbrt transformation
+# mutate(data2, cb = (Centiloid_merge - maxNeg)^(1/3)) -> data2
+# hist(data2$cb)
+# 
+# cbmodel1_dmn = lm(DMN_x_DMN ~ cb 
+#                 + age_tau 
+#                 + EDUC 
+#                 + GENDER 
+#                 + mean_FD_pre_threshold
+#                 , data = data2)
+# summary(cbmodel1_dmn)
+
+#scatter plots
+ggplot(aes(x = Centiloid_merge, y = DMN_x_DMN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Centiloid", y = "DMN x DMN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+ggplot(aes(x = logCentiloidplus, y = DMN_x_DMN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid + 3)", y = "DMN x DMN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+m1_dmn_cent_t = summary(model1_dmn)[["coefficients"]][, "t value"][2]
+m1_dmn_cent_p = summary(model1_dmn)[["coefficients"]][, "Pr(>|t|)"][2]
+
+```
+
+##Model 2 - FC ~ Tau (and covariates)
+```{r}
+#linear regression
+hist(data2$Tauopathy
+     ,main="Distribution of subjects by tau levels"
+     ,xlab="Tau levels (AV 1451)",ylab="DMN Connectivity")
+
+model2_dmn = lm(DMN_x_DMN ~ Tauopathy 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model2_dmn)
+#scatterplot
+ggplot(aes(x = Tauopathy, y = DMN_x_DMN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  geom_vline(xintercept = 1.22, linetype = "longdash")+
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Tau", y = "DMN x DMN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#linear regression with log transformation
+data2 %>%
+  mutate(logTau = log(Tauopathy)) -> data2
+hist(data2$logTau
+     ,main="Distribution of subjects by log transformed tau"
+     ,xlab="Normalized Tau levels (AV 1451)",ylab="DMN Connectivity")
+logmodel2_dmn = lm(DMN_x_DMN ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_dmn)
+#scatterplot with log transformation
+ggplot(aes(x = logTau, y = DMN_x_DMN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "DMN x DMN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+```
+
+##Model 3 - FC ~ Centiloid and Tau (main effects only, and covariates)
+```{r}
+####################### Centiloid + Tau + covariates
+#linear regression
+model3cent_dmn = lm(DMN_x_DMN ~ Centiloid_merge 
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model3cent_dmn)
+
+# residuals effect plot
+# effect_plot(model3cent_dmn,
+#             Centiloid_merge,
+#             plot.points = TRUE,
+#             interval = TRUE,
+#             x.label = "Centiloid (residual)")
+# plot(predictorEffects(model3cent_dmn, ~ Centiloid_merge,
+#                       partial.residuals = TRUE) )
+# 
+plot(Effect(c("Centiloid_merge"), model3cent_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Centiloid (residualized)"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")#,
+#lattice=list(layout=c(4, 1)))
+
+
+#linear regression with log transformation
+logmodel3_dmn = lm(DMN_x_DMN ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+hist(data2$logCentiloidplus)
+summary(logmodel3_dmn)
+
+#residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_dmn,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "Model 3: FC ~ Centiloid and Tau (main effects only, and covariates)")
+
+#r-value for residualized plot
+partial.r(DMN_x_DMN ~ logCentiloidplus - logTau - age_tau - EDUC - mean_FD_pre_threshold, data=data2)
+
+```
+
+##Model 4 - FC ~ Centiloid*Tau (including continuous interaction, and covariates)
+```{r}
+#linear regression
+model4_dmn = lm(DMN_x_DMN ~ Centiloid_merge*Tauopathy
+                + Centiloid_merge
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model4_dmn)
+
+#effect plot
+plot(Effect(c("Centiloid_merge","Tauopathy"), model4_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Centiloid (residualized)"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+
+#linear regression with log transformation
+logmodel4_dmn = lm(DMN_x_DMN ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_dmn)
+
+#effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+```
+
+##Model 5 - FC ~ Centiloid*Tau (including binarized Centiloid interaction, and covariates)
+```{r}
+#assigns subjects as cent+ or cent-
+data2$centCategory <- cut(data2$Centiloid_merge, breaks = c(-Inf, 20.6, +Inf), labels = c("Cent-", "Cent+"))
+table(data2$centCategory) #136 Cent- & 51 Cent+
+
+#linear regression
+model5_dmn = lm(DMN_x_DMN ~ centCategory*Tauopathy
+                + centCategory
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model5_dmn)
+
+
+#effect plot
+plot(Effect(c("centCategory","Tauopathy"), model5_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Tau"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+
+
+#more categorical (cent+/-) visuals
+plot(predictorEffects(model5_dmn, ~centCategory)
+     , partial.residual=list(multiline = TRUE)
+     #, col = c(unique("centCategory"))
+     #, lines = list(multiline = TRUE)
+    # , xlab = "Tau (residualized)"
+     #, ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+
+#linear regression for logTau
+logmodel5_dmn = lm(DMN_x_DMN ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_dmn)
+
+#effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+
+```
+
+##Extra - FC ~ Tau*Centiloid (including binarized Tau interaction, and covariates)
+```{r}
+#assigns subjects as tau+ or tau-
+data2$tauCategory <- cut(data2$Tauopathy, breaks = c(-Inf, 1.22, +Inf), labels = c("Tau-", "Tau+")) 
+table(data2$tauCategory) #117 Tau- & 70 Tau+
+
+#linear regression
+em_dmn = lm(DMN_x_DMN ~ tauCategory*Centiloid_merge
+                + tauCategory
+                + Centiloid_merge
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(em_dmn)
+
+
+#effect plot
+plot(Effect(c("tauCategory","Centiloid_merge"), em_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Centiloid"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+
+
+#more categorical (cent+/-) visuals
+plot(predictorEffects(em_dmn, ~tauCategory)
+     , partial.residual=list(multiline = TRUE)
+     #, col = c(unique("centCategory"))
+     #, lines = list(multiline = TRUE)
+    # , xlab = "Tau (residualized)"
+     #, ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+
+#linear regression for logCent
+logem_dmn = lm(DMN_x_DMN ~ tauCategory*logCentiloidplus
+                + tauCategory
+                + logCentiloidplus
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logem_dmn)
+
+
+#effect plot
+plot(Effect(c("tauCategory","logCentiloidplus"), logem_dmn,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "DMN x DMN Connectivity (residualized)"
+     , main = "")
+```
+###Reproducing figure 1 of Schultz Paper
+```{r}
+# plot without log transformation
+data2$at_int = data2$Centiloid_merge * data2$Tauopathy
+ggplot(data=data2, aes(x=at_int, y=DMN_x_DMN, color=centCategory, shape=centCategory)) +
+  geom_point() +
+  geom_smooth(method=loess, color='black', fill='lightblue', aes(group=1)) +
+  ggtitle("Schultz Fig. 1") +
+  xlab("Centiloid x Tau") + ylab("DMN x DMN fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold")
+        ,legend.title = element_blank())
+
+#plot with log transformations
+data2$logat_int = data2$logCentiloidplus * data2$logTau
+ggplot(data=data2, aes(x=logat_int, y=DMN_x_DMN, color=centCategory, shape=centCategory)) +
+  geom_point() +
+  geom_smooth(method=loess, color='black', fill='lightblue', aes(group=1)) +
+  ggtitle("") +
+  xlab("log Centiloid x log AV1451") + ylab("DMN x DMN fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+```
+
+###Reproducing figure 2 of Schultz Paper
+```{r}
+#Define subsets of dataframe
+data_highCent <- subset(data2, Centiloid_merge > 20.6)
+data_lowTau <- subset(data2, Tauopathy < 1.22)
+
+# plot centiloid positive subjects: DMN(Tau)
+ggplot(data=data_highCent, aes(x=Tauopathy, y=DMN_x_DMN)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("High Centiloid Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("Tau") + ylab("DMN x DMN fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot DMN(log(Tau))
+ggplot(data=data_highCent, aes(x=logTau, y=DMN_x_DMN)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("High Centiloid Group") +
+  xlab("log AV 1451 Tau") + ylab("DMN x DMN fcMRI") +
+  stat_cor(method="pearson", p.digits = 2)+
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot tau negative subjects: DMN(centiloid)
+ggplot(data=data_lowTau, aes(x=Centiloid_merge, y=DMN_x_DMN)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("Low Tau Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("Centiloid not normalized") + ylab("DMN x DMN fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot tau negative subjects: DMN(log(centiloid))
+ggplot(data=data_lowTau, aes(x=logCentiloidplus, y=DMN_x_DMN)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("Low Tau Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("log Centiloid") + ylab("DMN x DMN fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+```
+
+##DMN statistics table
+```{r}
+#function that converts lm into df
+convert_tbl <- function(tbl) {
+  tidy_tbl <- tidy(tbl)
+  tbl <- as.data.frame(tidy_tbl)
+}
+#convert the five lms into dfs
+lm1_c <- convert_tbl(logmodel1p_dmn)
+lm2_c <- convert_tbl(logmodel2_dmn)
+lm3_c <- convert_tbl(logmodel3_dmn)
+lm4_c <- convert_tbl(logmodel4_dmn)
+lm5_c <- convert_tbl(logmodel5_dmn)
+
+schultz_large_dmn <-rbind(lm1_c, lm2_c, lm3_c, lm4_c, lm5_c) #combine lms by row
+schultz_medium_dmn <- schultz_large_dmn[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_dmn <- schultz_medium_dmn %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+# schultz_small[1:6,1] <- c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+#                    "Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+
+schultz_final_dmn <- schultz_small_dmn %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+#raw data
+m1_c <- convert_tbl(model1_dmn)
+m2_c <- convert_tbl(model2_dmn)
+m3_c <- convert_tbl(model3cent_dmn)
+m4_c <- convert_tbl(model4_dmn)
+m5_c <- convert_tbl(model5_dmn)
+
+schultz_large_raw_dmn <-rbind(m1_c, m2_c, m3_c, m4_c, m5_c) #combine lms by row
+schultz_medium_raw_dmn <- schultz_large_raw_dmn[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_raw_dmn <- schultz_medium_raw_dmn %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+# schultz_small[1:6,1] <- c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+#                    "Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+
+schultz_final_raw_dmn <- schultz_small_raw_dmn %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.1 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (SAL x SAL)
+##Model 1 - FC ~ Centiloid (and covariates)
+```{r}
+model1_sal = lm(SAL_x_SAL ~ Centiloid_merge 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model1_sal)
+
+logmodel1p_sal = lm(SAL_x_SAL ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_sal)
+
+ggplot(aes(x = logCentiloidplus, y = SAL_x_SAL), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "SAL x SAL fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+
+```
+
+##Model 2 - FC ~ Tau (and covariates)
+```{r}
+model2_sal = lm(SAL_x_SAL ~ Tauopathy 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model2_sal)
+
+logmodel2_sal = lm(SAL_x_SAL ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_sal)
+
+#scatterplot with raw data
+ggplot(aes(x = Tauopathy, y = SAL_x_SAL), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Tau", y = "SAL x SAL fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#scatterplot with log transformation
+ggplot(aes(x = logTau, y = SAL_x_SAL), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "SAL x SAL fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#effects plot with raw data
+plot(Effect(c("Tauopathy"), model2_sal,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "Raw AV 1451 (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "Model 2: FC ~ Tau (and covariates)")
+
+#effects plot with log transformation
+plot(Effect(c("logTau"), logmodel2_sal,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "log AV 1451 (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "Model 2: FC ~ Tau (and covariates)")
+
+#r-value for residualized plot
+partial.r(SAL_x_SAL ~ logTau - age_tau - EDUC - mean_FD_pre_threshold, data=data2)
+```
+
+##Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+```{r}
+#raw data analysis
+model3_sal = lm(SAL_x_SAL ~ Centiloid_merge
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model3_sal)
+
+plot(Effect(c("Centiloid_merge"), model3_sal,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "Model 3: FC ~ Centiloid and Tau (main effects only, and covariates)")
+
+plot(Effect(c("Tauopathy"), model3_sal,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "Raw AV 1451 (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "Model 3: FC ~ Centiloid and Tau (main effects only, and covariates)")
+
+#log transformed analysis
+logmodel3_sal = lm(SAL_x_SAL ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_sal)
+
+plot(Effect(c("logCentiloidplus"), logmodel3_sal,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "Model 3: FC ~ Centiloid and Tau (main effects only, and covariates)")
+
+plot(Effect(c("logTau"), logmodel3_sal,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "log AV 1451 (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "Model 3: FC ~ Centiloid and Tau (main effects only, and covariates)")
+
+#r-value for residualized plot
+partial.r(SAL_x_SAL ~ logCentiloidplus -logTau - age_tau - EDUC - mean_FD_pre_threshold, data=data2)
+partial.r(SAL_x_SAL ~ logTau - logCentiloidplus - age_tau - EDUC - mean_FD_pre_threshold, data=data2)
+
+```
+
+##Model 4 - FC ~ Centiloid*Tau (including continuous interaction, and covariates)
+```{r}
+#linear regression with raw data
+model4_sal = lm(SAL_x_SAL ~ Centiloid_merge*Tauopathy
+                + Centiloid_merge       
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model4_sal)
+
+#linear regression with log transformation
+logmodel4_sal = lm(SAL_x_SAL ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_sal)
+
+#raw effect plot
+plot(Effect(c("Centiloid_merge","Tauopathy"), model4_sal,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+
+#log effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_sal,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+```
+
+##Model 5 - FC ~ Centiloid*Tau (including binarized Centiloid interaction, and covariates)
+```{r}
+#linear regression for raw data
+model5_sal = lm(SAL_x_SAL ~ centCategory*Tauopathy
+                + centCategory
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model5_sal)
+
+#effect plot for raw Tau
+plot(Effect(c("centCategory","Tauopathy"), model5_sal,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Raw Tau (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+
+#linear regression for log transformations
+logmodel5_sal = lm(SAL_x_SAL ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_sal)
+
+#effect plot for log transformations
+plot(Effect(c("centCategory","logTau"), logmodel5_sal,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+
+```
+
+###Reproducing figure 1 of Schultz paper
+```{r}
+
+# plot without log transformation
+ggplot(data=data2, aes(x=at_int, y=SAL_x_SAL, color=centCategory, shape=centCategory)) +
+  geom_point() +
+  geom_smooth(method=loess, color='black', fill='lightblue', aes(group=1)) +
+  ggtitle("Schultz Fig. 1") +
+  xlab("Centiloid x Tau") + ylab("SAL x SAL fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold")
+        ,legend.title = element_blank())
+
+#plot with log transformations
+ggplot(data=data2, aes(x=logat_int, y=SAL_x_SAL, color=centCategory, shape=centCategory)) +
+  geom_point() +
+  geom_smooth(method=loess, color='black', fill='lightblue', aes(group=1)) +
+  ggtitle("") +
+  xlab("log Centiloid x log AV1451") + ylab("SAL x SAL fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+```
+
+
+###Reproducing figure 2 of Schultz Paper
+```{r}
+#plot amyloid positive SAL(log(Tau))
+ggplot(data=data_highCent, aes(x=logTau, y=SAL_x_SAL)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("High Centiloid Group") +
+  xlab("log AV 1451 Tau") + ylab("SAL x SAL fcMRI") +
+  stat_cor(method="pearson", p.digits = 2)+
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot tau negative subjects: SAL(log(centiloid))
+ggplot(data=data_lowTau, aes(x=logCentiloidplus, y=SAL_x_SAL)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("Low Tau Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("log Centiloid") + ylab("SAL x SAL fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#linear regression
+em_sal = lm(SAL_x_SAL ~ tauCategory*Centiloid_merge
+                + tauCategory
+                + Centiloid_merge
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(em_sal)
+
+
+#residualized effect plot
+plot(Effect(c("tauCategory","Centiloid_merge"), em_sal,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Centiloid"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+
+
+#more categorical (cent+/-) visuals
+plot(predictorEffects(em_sal, ~tauCategory)
+     , partial.residual=list(multiline = TRUE)
+     #, col = c(unique("centCategory"))
+     #, lines = list(multiline = TRUE)
+    # , xlab = "Tau (residualized)"
+     #, ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+
+#linear regression for logCent
+logem_sal = lm(SAL_x_SAL ~ tauCategory*logCentiloidplus
+                + tauCategory
+                + logCentiloidplus
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logem_sal)
+
+
+#effect plot
+plot(Effect(c("tauCategory","logCentiloidplus"), logem_sal,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SAL x SAL Connectivity (residualized)"
+     , main = "")
+```
+
+##SAL statistics table
+```{r}
+#convert the five lms into dfs
+lm1_s <- convert_tbl(logmodel1p_sal)
+lm2_s <- convert_tbl(logmodel2_sal)
+lm3_s <- convert_tbl(logmodel3_sal)
+lm4_s <- convert_tbl(logmodel4_sal)
+lm5_s <- convert_tbl(logmodel5_sal)
+
+schultz_large_sal <-rbind(lm1_s, lm2_s, lm3_s, lm4_s, lm5_s) #combine lms by row
+schultz_medium_sal <- schultz_large_sal[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_sal <- schultz_medium_sal %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+#schultz_small_sal[1:6,1] <- c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+                   #"Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+
+schultz_final_sal <- schultz_small_sal %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+#RAW DATA
+#convert the five lms into dfs
+m1_s <- convert_tbl(model1_sal)
+m2_s <- convert_tbl(model2_sal)
+m3_s <- convert_tbl(model3_sal)
+m4_s <- convert_tbl(model4_sal)
+m5_s <- convert_tbl(model5_sal)
+
+schultz_large_raw_sal <-rbind(m1_s, m2_s, m3_s, m4_s, m5_s) #combine lms by row
+schultz_medium_raw_sal <- schultz_large_raw_sal[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_raw_sal <- schultz_medium_raw_sal %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+#schultz_small_sal[1:6,1] <- c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+                   #"Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+
+schultz_final_raw_sal <- schultz_small_raw_sal %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (FPN x FPN)
+##Model 1 - FC ~ Centiloid (and covariates)
+```{r}
+#raw data analysis
+#log transformed analysis
+model1_fp = lm(FP_x_FP ~ Centiloid_merge
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model1_fp)
+
+ggplot(aes(x = Centiloid_merge, y = FP_x_FP), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Centiloid", y = "FP_x_FP fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#log transformed analysis
+logmodel1p_fp = lm(FP_x_FP ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_fp)
+
+ggplot(aes(x = logCentiloidplus, y = FP_x_FP), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "FP_x_FP fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+```
+
+##Model 2 - FC ~ Tau (and covariates)
+```{r}
+#raw data analysis
+model2_fp = lm(FP_x_FP ~ Tauopathy 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model2_fp)
+#scatterplot with log transformation
+ggplot(aes(x = Tauopathy, y = FP_x_FP), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Tau", y = "FP_x_FP fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#log transformed analysis
+logmodel2_fp = lm(FP_x_FP ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_fp)
+#scatterplot with log transformation
+ggplot(aes(x = logTau, y = FP_x_FP), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "FP_x_FP fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+```
+
+##Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+```{r}
+#raw data analysis
+model3_fp = lm(FP_x_FP ~ Centiloid_merge 
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model3_fp)
+
+#residuals effect plot
+plot(Effect(c("Centiloid_merge"), model3_fp,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "FP_x_FP fc (residualized)"
+     , main = "")
+
+#log transformed analysis
+logmodel3_fp = lm(FP_x_FP ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_fp)
+
+#residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_fp,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "FP_x_FP fc (residualized)"
+     , main = "")
+```
+
+##Model 4 - FC ~ Centiloid*Tau (including continuous interaction, and covariates)
+```{r}
+#linear regression with raw data
+model4_fp = lm(FP_x_FP ~ Centiloid_merge*Tauopathy
+                + Centiloid_merge       
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model4_fp)
+
+#effect plot
+plot(Effect(c("Centiloid_merge","Tauopathy"), model4_fp,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "FP_x_FP Connectivity (residualized)"
+     , main = "")
+
+#linear regression with log transformation
+logmodel4_fp = lm(FP_x_FP ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_fp)
+
+#effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_fp,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "FP_x_FP Connectivity (residualized)"
+     , main = "")
+```
+
+##Model 5 - FC ~ Centiloid*Tau (including binarized Centiloid interaction, and covariates)
+```{r}
+#linear regression for raw tau
+model5_fp = lm(FP_x_FP ~ centCategory*Tauopathy
+                + centCategory
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model5_fp)
+
+#effect plot
+plot(Effect(c("centCategory","Tauopathy"), model5_fp,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Raw Tau (residualized)"
+     , ylab = "FP_x_FP Connectivity (residualized)"
+     , main = "")
+
+#linear regression for logTau
+logmodel5_fp = lm(FP_x_FP ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_fp)
+
+#effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_fp,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "FP_x_FP Connectivity (residualized)"
+     , main = "")
+
+```
+
+##FPN statistics table
+```{r}
+#convert the five lms into dfs
+lm1_f <- convert_tbl(logmodel1p_fp)
+lm2_f <- convert_tbl(logmodel2_fp)
+lm3_f <- convert_tbl(logmodel3_fp)
+lm4_f <- convert_tbl(logmodel4_fp)
+lm5_f <- convert_tbl(logmodel5_fp)
+
+schultz_large_fp <-rbind(lm1_f, lm2_f, lm3_f, lm4_f, lm5_f) #combine lms by row
+schultz_medium_fp <- schultz_large_fp[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_fp <- schultz_medium_fp %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+#schultz_small_fp[1:6,1] <- c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+                   #"Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+
+schultz_final_fp <- schultz_small_fp %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+#RAW DATA
+#convert the five lms into dfs
+m1_f <- convert_tbl(model1_fp)
+m2_f <- convert_tbl(model2_fp)
+m3_f <- convert_tbl(model3_fp)
+m4_f <- convert_tbl(model4_fp)
+m5_f <- convert_tbl(model5_fp)
+
+schultz_large_raw_fp <-rbind(m1_f, m2_f, m3_f, m4_f, m5_f) #combine lms by row
+schultz_medium_raw_fp <- schultz_large_raw_fp[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_raw_fp <- schultz_medium_raw_fp %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+#schultz_small_fp[1:6,1] <- c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+                   #"Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+
+schultz_final_raw_fp <- schultz_small_raw_fp %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+
+#Analyses (DAN x DAN)
+##Model 1 - FC ~ Centiloid (and covariates)
+```{r}
+#raw data analysis
+model1_dan = lm(DAN_x_DAN ~ Centiloid_merge 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model1_dan)
+
+ggplot(aes(x = Centiloid_merge, y = DAN_x_DAN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Centiloid", y = "DAN_x_DAN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+plot(Effect(c("Centiloid_merge"), model1_dan,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "DAN x DAN Connectivity (residualized)"
+     , main = "Model 1 - FC ~ Centiloid (and covariates)")
+
+#log transformed analysis
+logmodel1p_dan = lm(DAN_x_DAN ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_dan)
+
+ggplot(aes(x = logCentiloidplus, y = DAN_x_DAN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "DAN_x_DAN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+plot(Effect(c("logCentiloidplus"), logmodel1p_dan,
+      partial.residuals = TRUE)
+     , partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "DAN x DAN Connectivity (residualized)"
+     , main = "Model 1 - FC ~ Centiloid (and covariates)")
+
+#r-value for residualized plot
+partial.r(DAN_x_DAN ~ logCentiloidplus - age_tau - EDUC - mean_FD_pre_threshold, data=data2)
+
+```
+
+##Model 2 - FC ~ Tau (and covariates)
+```{r}
+#raw data analysis
+model2_dan = lm(DAN_x_DAN ~ Tauopathy 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model2_dan)
+#scatterplot with log transformation
+ggplot(aes(x = Tauopathy, y = DAN_x_DAN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "Raw Tau", y = "DAN_x_DAN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#log transformed analysis
+logmodel2_dan = lm(DAN_x_DAN ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_dan)
+#scatterplot with log transformation
+ggplot(aes(x = logTau, y = DAN_x_DAN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "DAN_x_DAN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+```
+
+##Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+```{r}
+#raw data analysis
+model3_dan = lm(DAN_x_DAN ~ Centiloid_merge
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model3_dan)
+
+#residuals effect plot
+plot(Effect(c("Centiloid_merge"), model3_dan,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "DAN x DAN fc (residualized)"
+     , main = "Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)")
+
+#log transformed analysis
+logmodel3_dan = lm(DAN_x_DAN ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_dan)
+
+#residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_dan,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "DAN x DAN fc (residualized)"
+     , main = "Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)")
+
+#r-value for residualized plot
+partial.r(DAN_x_DAN ~ logCentiloidplus - logTau - age_tau - EDUC - mean_FD_pre_threshold, data=data2)
+```
+
+##Model 4 - FC ~ Centiloid*Tau (including continuous interaction, and covariates)
+```{r}
+#linear regression with raw data
+model4_dan = lm(DAN_x_DAN ~ Centiloid_merge*Tauopathy
+                + Centiloid_merge      
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model4_dan)
+
+#effect plot of raw data
+plot(Effect(c("Centiloid_merge","Tauopathy"), model4_dan,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "Raw Centiloid (residualized)"
+     , ylab = "DAN_x_DAN Connectivity (residualized)"
+     , main = "")
+
+#linear regression with log transformation
+logmodel4_dan = lm(DAN_x_DAN ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_dan)
+
+#effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_dan,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "DAN_x_DAN Connectivity (residualized)"
+     , main = "")
+```
+
+##Model 5 - FC ~ Centiloid*Tau (including binarized Centiloid interaction, and covariates)
+```{r}
+#linear regression for raw data
+model5_dan = lm(DAN_x_DAN ~ centCategory*Tauopathy
+                + centCategory
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model5_dan)
+
+#effect plot for raw data
+plot(Effect(c("centCategory","Tauopathy"), model5_dan,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Raw Tau (residualized)"
+     , ylab = "DAN x DAN Connectivity (residualized)"
+     , main = "")
+
+
+#linear regression for logTau
+logmodel5_dan = lm(DAN_x_DAN ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_dan)
+
+#effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_dan,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "DAN x DAN Connectivity (residualized)"
+     , main = "")
+
+```
+
+###DAN + Schultz statistics table
+```{r}
+#convert the five lms into dfs
+lm1_d <- convert_tbl(logmodel1p_dan)
+lm2_d <- convert_tbl(logmodel2_dan)
+lm3_d <- convert_tbl(logmodel3_dan)
+lm4_d <- convert_tbl(logmodel4_dan)
+lm5_d <- convert_tbl(logmodel5_dan)
+
+schultz_large_dan <-rbind(lm1_d, lm2_d, lm3_d, lm4_d, lm5_d) #combine lms by row
+schultz_medium_dan <- schultz_large_dan[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_dan <- schultz_medium_dan %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_dan <- schultz_small_dan %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+schultz_update = cbind(schultz_final_dmn, schultz_final_sal, schultz_final_dan, schultz_final_fp)
+
+schultz_update <- data.frame(m = c("Model 1: Centiloid (and covariates)", "Model 2: Tau (and covariates)", "Model 3: Centiloid (controlling for Tau and covariates)", "Model 3: Tau (controlling for Centiloid and covariates)", "Model 4: Centiloid x Tau (continuous and covariates)", "Model 5: Centiloid Group x Tau (categorical and covariates)")
+                   , schultz_update, check.names = FALSE)
+colnames(schultz_update)[1] <- ""
+kable(schultz_update, format = "html") %>%
+  kable_styling(c("striped", "bordered"), full_width = F) %>%
+  add_header_above(c(' ', 'Log Transformed DMN' = 3, 'Log Transformed SAL' = 3, 'Log Transformed DAN' = 3, 'Log Transformed FPN' = 3))
+
+#statistics table for raw data
+#convert the five lms into dfs
+m1_d <- convert_tbl(model1_dan)
+m2_d <- convert_tbl(model2_dan)
+m3_d <- convert_tbl(model3_dan)
+m4_d <- convert_tbl(model4_dan)
+m5_d <- convert_tbl(model5_dan)
+
+schultz_large_raw_dan <-rbind(m1_d, m2_d, m3_d, m4_d, m5_d) #combine lms by row
+schultz_medium_raw_dan <- schultz_large_raw_dan[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_raw_dan <- schultz_medium_raw_dan %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_raw_dan <- schultz_small_raw_dan %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+schultz_raw_update = cbind(schultz_final_raw_dmn, schultz_final_raw_sal, schultz_final_raw_dan, schultz_final_raw_fp)
+
+schultz_raw_update <- data.frame(m = c("Model 1: Centiloid (and covariates)", "Model 2: Tau (and covariates)", "Model 3: Centiloid (controlling for Tau and covariates)", "Model 3: Tau (controlling for Centiloid and covariates)", "Model 4: Centiloid x Tau (continuous and covariates)", "Model 5: Centiloid Group x Tau (categorical and covariates)")
+                   , schultz_raw_update, check.names = FALSE)
+colnames(schultz_raw_update)[1] <- ""
+kable(schultz_raw_update, format = "html") %>%
+  kable_styling(c("striped", "bordered"), full_width = F) %>%
+  add_header_above(c(' ', 'Raw DMN' = 3, 'Raw SAL' = 3, 'Raw DAN' = 3, 'Raw FPN' = 3))
+
+```
+
+#Analyses (NA x NA)
+##NA x NA Models
+```{r}
+##Model 1 - FC ~ Centiloid (and covariates)
+
+model1_na = lm(NA_x_NA ~ Centiloid_merge 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model1_na)
+
+logmodel1p_na = lm(NA_x_NA ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_na)
+
+ggplot(aes(x = logCentiloidplus, y = NA_x_NA), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "NA_x_NA fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+model2_na = lm(NA_x_NA ~ Tauopathy 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model2_na)
+logmodel2_na = lm(NA_x_NA ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_na)
+#scatterplot with log transformation
+ggplot(aes(x = logTau, y = NA_x_NA), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "NA_x_NA fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+model3_na = lm(NA_x_NA ~ Centiloid_merge 
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model3_na)
+
+logmodel3_na = lm(NA_x_NA ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_na)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_na,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "NA x NA fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+model4_na = lm(NA_x_NA ~ Centiloid_merge*Tauopathy
+                + Centiloid_merge      
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model4_na)
+
+logmodel4_na = lm(NA_x_NA ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_na)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_na,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "NA x NA Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+model5_na = lm(NA_x_NA ~ centCategory*Tauopathy
+                + centCategory
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model5_na)
+
+logmodel5_na = lm(NA_x_NA ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_na)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_na,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "NA x NA Connectivity (residualized)"
+     , main = "")
+```
+
+net##NA x NA statistics table
+```{r}
+#RAW DATA
+m1_n <- convert_tbl(model1_na)
+m2_n <- convert_tbl(model2_na)
+m3_n <- convert_tbl(model3_na)
+m4_n <- convert_tbl(model4_na)
+m5_n <- convert_tbl(model5_na)
+
+schultz_large_raw_na <-rbind(m1_n, m2_n, m3_n, m4_n, m5_n) #combine lms by row
+schultz_medium_raw_na <- schultz_large_raw_na[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_raw_na <- schultz_medium_raw_na %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_raw_na <- schultz_small_raw_na %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+#LOG DATA
+lm1_n <- convert_tbl(logmodel1p_na)
+lm2_n <- convert_tbl(logmodel2_na)
+lm3_n <- convert_tbl(logmodel3_na)
+lm4_n <- convert_tbl(logmodel4_na)
+lm5_n <- convert_tbl(logmodel5_na)
+
+schultz_large_na <-rbind(lm1_n, lm2_n, lm3_n, lm4_n, lm5_n) #combine lms by row
+schultz_medium_na <- schultz_large_na[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_na <- schultz_medium_na %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_na <- schultz_small_na %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (SM x SM)
+##SM X SM Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+model1_sm = lm(SM_x_SM ~ Centiloid_merge
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model1_sm)
+
+logmodel1p_sm = lm(SM_x_SM ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_sm)
+
+ggplot(aes(x = logCentiloidplus, y = SM_x_SM), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "SM x SM fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+model2_sm = lm(SM_x_SM ~ Tauopathy 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model2_sm)
+
+logmodel2_sm = lm(SM_x_SM ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_sm)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = SM_x_SM), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "SM x SM fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+model3_sm = lm(SM_x_SM ~ Centiloid_merge 
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model3_sm)
+
+logmodel3_sm = lm(SM_x_SM ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_sm)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_sm,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SM x SM fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+model4_sm = lm(SM_x_SM ~ Centiloid_merge*Tauopathy
+                + Centiloid_merge       
+                + Tauopathy   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model4_sm)
+
+logmodel4_sm = lm(SM_x_SM ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_sm)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_sm,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SM x SM Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+model5_sm = lm(SM_x_SM ~ centCategory*Tauopathy
+                + centCategory
+                + Tauopathy
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(model5_sm)
+
+logmodel5_sm = lm(SM_x_SM ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_sm)
+
+##effect plot
+plot(Effect(c("centCategory","Tauopathy"), model5_sm,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "Raw Tau (residualized)"
+     , ylab = "SM x SM Connectivity (residualized)"
+     , main = "")
+
+plot(Effect(c("centCategory","logTau"), logmodel5_sm,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "SM x SM Connectivity (residualized)"
+     , main = "")
+```
+
+##SM x SM statistics table
+```{r}
+lm1_sm <- convert_tbl(logmodel1p_sm)
+lm2_sm <- convert_tbl(logmodel2_sm)
+lm3_sm <- convert_tbl(logmodel3_sm)
+lm4_sm <- convert_tbl(logmodel4_sm)
+lm5_sm <- convert_tbl(logmodel5_sm)
+
+schultz_large_sm <-rbind(lm1_sm, lm2_sm, lm3_sm, lm4_sm, lm5_sm) #combine lms by row
+schultz_medium_sm <- schultz_large_sm[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_sm <- schultz_medium_sm %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_sm <- schultz_small_sm %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+###Extra - Replicate Schultz fig. 1 and FC ~ Tau Group x Centiloid (and covariates)
+```{r}
+#Schultz fig. 1:
+data2$logat_int = data2$logCentiloidplus * data2$logTau
+ggplot(data=data2, aes(x=logat_int, y=SM_x_SM, color=centCategory, shape=centCategory)) +
+  geom_point() +
+  geom_smooth(method=loess, color='black', fill='lightblue', aes(group=1)) +
+  ggtitle("") +
+  xlab("Centiloid x AV1451") + ylab("SM x SM fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#Schultz fig. 2:
+
+#plot amyloids positive subjects: SM(log(Tau))
+ggplot(data=data_highCent, aes(x=logTau, y=SM_x_SM)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("High Centiloid Group") +
+  xlab("log AV 1451 Tau") + ylab("SM x SM fcMRI") +
+  stat_cor(method="pearson", p.digits = 2)+
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot tau negative subjects: SM(log(centiloid))
+ggplot(data=data_lowTau, aes(x=logCentiloidplus, y=SM_x_SM)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("Low Tau Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("log Centiloid") + ylab("SM x SM fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#linear regression for FC ~ Tau group x logCent
+logem_sm = lm(SM_x_SM ~ tauCategory*logCentiloidplus
+                + tauCategory
+                + logCentiloidplus
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logem_sm)
+
+
+#effect plot
+plot(Effect(c("tauCategory","logCentiloidplus"), logem_sm,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SM x SM Connectivity (residualized)"
+     , main = "")
+```
+
+
+#Analyses (SM lat x SM lat)
+##SM lat X SM lat Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_sm_lat = lm(SM_lat_x_SM_lat ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_sm)
+
+ggplot(aes(x = logCentiloidplus, y = SM_lat_x_SM_lat), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "SM_lat x SM_lat fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_sm_lat = lm(SM_lat_x_SM_lat ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_sm_lat)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = SM_lat_x_SM_lat), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "SM_lat x SM_lat fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_sm_lat = lm(SM_lat_x_SM_lat ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_sm_lat)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_sm_lat,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SM lat x SM lat fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_sm_lat = lm(SM_lat_x_SM_lat ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_sm_lat)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_sm_lat,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SM lat x SM lat Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_sm_lat = lm(SM_lat_x_SM_lat ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_sm_lat)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_sm_lat,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "SM lat x SM lat Connectivity (residualized)"
+     , main = "")
+```
+
+
+##SM lat x SM lat statistics table
+```{r}
+lm1_sm_lat <- convert_tbl(logmodel1p_sm_lat)
+lm2_sm_lat <- convert_tbl(logmodel2_sm_lat)
+lm3_sm_lat <- convert_tbl(logmodel3_sm_lat)
+lm4_sm_lat <- convert_tbl(logmodel4_sm_lat)
+lm5_sm_lat <- convert_tbl(logmodel5_sm_lat)
+
+schultz_large_sm_lat <-rbind(lm1_sm_lat, lm2_sm_lat, lm3_sm_lat, lm4_sm_lat, lm5_sm_lat) #combine lms by row
+schultz_medium_sm_lat <- schultz_large_sm_lat[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_sm_lat <- schultz_medium_sm_lat %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_sm_lat <- schultz_small_sm_lat %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (CO x CO)
+##CO x CO Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_co = lm(CO_x_CO ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_co)
+
+ggplot(aes(x = logCentiloidplus, y = CO_x_CO), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "CO x CO fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_co = lm(CO_x_CO ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_co)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = CO_x_CO), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "CO x CO fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_co = lm(CO_x_CO ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_co)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_co,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "CO x CO fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_co = lm(CO_x_CO ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_co)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_co,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "CO x CO Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_co = lm(CO_x_CO ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_co)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_co,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "CO x CO Connectivity (residualized)"
+     , main = "")
+```
+
+##CO x CO statistics table
+```{r}
+lm1_co <- convert_tbl(logmodel1p_co)
+lm2_co <- convert_tbl(logmodel2_co)
+lm3_co <- convert_tbl(logmodel3_co)
+lm4_co <- convert_tbl(logmodel4_co)
+lm5_co <- convert_tbl(logmodel5_co)
+
+schultz_large_co <-rbind(lm1_co, lm2_co, lm3_co, lm4_co, lm5_co) #combine lms by row
+schultz_medium_co <- schultz_large_co[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_co <- schultz_medium_co %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_co <- schultz_small_co %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+###Extra - Replicate Schultz figures and FC ~ Tau Group x Centiloid (and covariates)
+```{r}
+#Schultz fig. 1:
+ggplot(data=data2, aes(x=logat_int, y=CO_x_CO, color=centCategory, shape=centCategory)) +
+  geom_point() +
+  geom_smooth(method=loess, color='black', fill='lightblue', aes(group=1)) +
+  ggtitle("") +
+  xlab("Centiloid x AV1451") + ylab("CO x CO fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+
+#linear regression for FC ~ Tau group x logCent
+logem_co = lm(CO_x_CO ~ tauCategory*logCentiloidplus
+                + tauCategory
+                + logCentiloidplus
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logem_co)
+
+#effect plot
+plot(Effect(c("tauCategory","logCentiloidplus"), logem_co,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "CO x CO Connectivity (residualized)"
+     , main = "")
+
+#Schultz fig. 2:
+##plot centiloid positive subjects: CO(Tau)
+ggplot(data=data_highCent, aes(x=Tauopathy, y=CO_x_CO)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("High Centiloid Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("Tau") + ylab("CO x CO fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot CO(log(Tau))
+ggplot(data=data_highCent, aes(x=logTau, y=CO_x_CO)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("High Centiloid Group") +
+  xlab("log AV 1451 Tau") + ylab("CO x CO fcMRI") +
+  stat_cor(method="pearson", p.digits = 2)+
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot tau negative subjects: CO(centiloid)
+ggplot(data=data_lowTau, aes(x=Centiloid_merge, y=CO_x_CO)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("Low Tau Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("Centiloid not normalized") + ylab("CO x CO fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+
+#plot tau negative subjects: CO(log(centiloid))
+ggplot(data=data_lowTau, aes(x=logCentiloidplus, y=CO_x_CO)) +
+  geom_point() +
+  geom_smooth(method=lm, color='black', fill='lightblue') +
+  ggtitle("Low Tau Group") +
+  stat_cor(method="pearson", p.digits = 2)+
+  xlab("log Centiloid") + ylab("CO x CO fcMRI") +
+  theme(plot.title = element_text(color="black", size=14, face="bold.italic", hjust = 0.5)
+        ,axis.title.x = element_text(color="blue", size=14, face="bold")
+        ,axis.title.y = element_text(color="#993333", size=14, face="bold"))
+```
+
+#Analyses (AUD x AUD)
+##AUD x AUD Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_aud = lm(AUD_x_AUD ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_aud)
+
+ggplot(aes(x = logCentiloidplus, y = AUD_x_AUD), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "AUD x AUD")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_aud = lm(AUD_x_AUD ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_aud)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = AUD_x_AUD), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "AUD x AUD fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_aud = lm(AUD_x_AUD ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_aud)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_aud,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "AUD x AUD fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_aud = lm(AUD_x_AUD ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_aud)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_aud,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "AUD x AUD Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_aud = lm(AUD_x_AUD ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_aud)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_aud,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "AUD x AUD Connectivity (residualized)"
+     , main = "")
+```
+
+##AUD x AUD statistics table
+```{r}
+lm1_aud <- convert_tbl(logmodel1p_aud)
+lm2_aud <- convert_tbl(logmodel2_aud)
+lm3_aud <- convert_tbl(logmodel3_aud)
+lm4_aud <- convert_tbl(logmodel4_aud)
+lm5_aud <- convert_tbl(logmodel5_aud)
+
+schultz_large_aud <-rbind(lm1_aud, lm2_aud, lm3_aud, lm4_aud, lm5_aud) #combine lms by row
+schultz_medium_aud <- schultz_large_aud[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_aud <- schultz_medium_aud %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_aud <- schultz_small_aud %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (MEM x MEM)
+##MEM x MEM Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_m = lm(MEM_x_MEM ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_aud)
+
+ggplot(aes(x = logCentiloidplus, y = MEM_x_MEM), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "MEM x MEM fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_m = lm(MEM_x_MEM ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_m)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = MEM_x_MEM), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "MEM x MEM fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_m = lm(MEM_x_MEM ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_m)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_m,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "MEM x MEM fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_m = lm(MEM_x_MEM ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_m)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_m,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "MEM x MEM Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_m = lm(MEM_x_MEM ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_m)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_m,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "MEM x MEM Connectivity (residualized)"
+     , main = "")
+```
+
+##MEM x MEM statistics table
+```{r}
+lm1_mem <- convert_tbl(logmodel1p_m)
+lm2_mem <- convert_tbl(logmodel2_m)
+lm3_mem <- convert_tbl(logmodel3_m)
+lm4_mem <- convert_tbl(logmodel4_m)
+lm5_mem <- convert_tbl(logmodel5_m)
+
+schultz_large_mem <-rbind(lm1_mem, lm2_mem, lm3_mem, lm4_mem, lm5_mem) #combine lms by row
+schultz_medium_mem <- schultz_large_mem[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_mem <- schultz_medium_mem %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_mem <- schultz_small_mem %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (VIS x VIS)
+##VIS x VIS Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_vis = lm(VIS_x_VIS ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_aud)
+
+ggplot(aes(x = logCentiloidplus, y = VIS_x_VIS), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "VIS x VIS")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_vis = lm(VIS_x_VIS ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_vis)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = VIS_x_VIS), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "VIS x VIS fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_vis = lm(VIS_x_VIS ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_vis)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_vis,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "VIS x VIS fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_vis = lm(VIS_x_VIS ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_vis)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_vis,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "VIS x VIS Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_vis = lm(VIS_x_VIS ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_vis)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_vis,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "VIS x VIS Connectivity (residualized)"
+     , main = "")
+```
+
+##VIS x VIS statistics table
+```{r}
+lm1_vis <- convert_tbl(logmodel1p_vis)
+lm2_vis <- convert_tbl(logmodel2_vis)
+lm3_vis <- convert_tbl(logmodel3_vis)
+lm4_vis <- convert_tbl(logmodel4_vis)
+lm5_vis <- convert_tbl(logmodel5_vis)
+
+schultz_large_vis <-rbind(lm1_vis, lm2_vis, lm3_vis, lm4_vis, lm5_vis) #combine lms by row
+schultz_medium_vis <- schultz_large_vis[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_vis <- schultz_medium_vis %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_vis <- schultz_small_vis %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (SUBcort x SUBcort)
+##SUBcort x SUBcort Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_sub = lm(SUBCort_x_SUBCort ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_sub)
+
+ggplot(aes(x = logCentiloidplus, y = SUBCort_x_SUBCort), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "SUBcort x SUBcort")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_sub = lm(SUBCort_x_SUBCort ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_sub)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = SUBCort_x_SUBCort), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "SUBcort x SUBcort fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_sub = lm(SUBCort_x_SUBCort ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_sub)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_sub,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SUBcort x SUBcort fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_sub = lm(SUBCort_x_SUBCort ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_sub)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_sub,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "SUBcort x SUBcort Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_sub = lm(SUBCort_x_SUBCort ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_sub)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_sub,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "SUBcort x SUBcort Connectivity (residualized)"
+     , main = "")
+```
+
+##SUBcort x SUBcort statistics table
+```{r}
+lm1_sub <- convert_tbl(logmodel1p_sub)
+lm2_sub <- convert_tbl(logmodel2_sub)
+lm3_sub <- convert_tbl(logmodel3_sub)
+lm4_sub <- convert_tbl(logmodel4_sub)
+lm5_sub <- convert_tbl(logmodel5_sub)
+
+schultz_large_sub <-rbind(lm1_sub, lm2_sub, lm3_sub, lm4_sub, lm5_sub) #combine lms by row
+schultz_medium_sub <- schultz_large_sub[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_sub <- schultz_medium_sub %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_sub <- schultz_small_sub %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (VAN x VAN)
+##VAN x VAN Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_van = lm(VAN_x_VAN ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_van)
+
+ggplot(aes(x = logCentiloidplus, y = VAN_x_VAN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "VAN x VAN")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_van = lm(VAN_x_VAN ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_van)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = VAN_x_VAN), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "VAN x VAN fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_van = lm(VAN_x_VAN ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_van)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_van,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "VAN x VAN fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_van = lm(VAN_x_VAN ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_van)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_van,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "VAN x VAN Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_van = lm(VAN_x_VAN ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_van)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_van,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "VAN x VAN Connectivity (residualized)"
+     , main = "")
+```
+
+##VAN x VAN statistics table
+```{r}
+lm1_van <- convert_tbl(logmodel1p_van)
+lm2_van <- convert_tbl(logmodel2_van)
+lm3_van <- convert_tbl(logmodel3_van)
+lm4_van <- convert_tbl(logmodel4_van)
+lm5_van <- convert_tbl(logmodel5_van)
+
+schultz_large_van <-rbind(lm1_van, lm2_van, lm3_van, lm4_van, lm5_van) #combine lms by row
+schultz_medium_van <- schultz_large_van[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_van <- schultz_medium_van %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_van <- schultz_small_van %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+```
+
+#Analyses (CEREB x CEREB)
+##CEREB x CEREB Models
+```{r}
+#Model 1 - FC ~ Centiloid (and covariates)
+##linear model
+logmodel1p_ce = lm(CEREB_x_CEREB ~ logCentiloidplus 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel1p_ce)
+
+ggplot(aes(x = logCentiloidplus, y = CEREB_x_CEREB), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed (Centiloid)", y = "CEREB x CEREB")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 2 - FC ~ Tau (and covariates)
+##linear model
+logmodel2_ce = lm(CEREB_x_CEREB ~ logTau 
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel2_ce)
+##scatterplot with log transformation
+ggplot(aes(x = logTau, y = CEREB_x_CEREB), data = data2) + # the variables and data source
+  geom_point(alpha = 0.5)+ # changes how transparent the dots are
+  geom_smooth(method = loess, se = TRUE)+ # adds in a line of best fit
+  stat_cor(method="pearson", p.digits = 2)+ # places the correlation value onto the plot
+  labs(x = "log transformed Tau", y = "CEREB x CEREB fc")+ # changes the axis labels
+  theme_classic() # removes a lot of the background default ggplot graphics to make a more simple plot
+
+#Model 3 - FC ~ Centiloid and Tau (main effects only and covariates)
+##linear model
+logmodel3_ce = lm(CEREB_x_CEREB ~ logCentiloidplus 
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel3_ce)
+
+##residuals effect plot
+plot(Effect(c("logCentiloidplus"), logmodel3_ce,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "CEREB x CEREB fc (residualized)"
+     , main = "")
+
+#Model 4 - FC ~ Centiloid x Tau (and covariates)
+##linear regression with log transformation
+logmodel4_ce = lm(CEREB_x_CEREB ~ logCentiloidplus*logTau
+                + logCentiloidplus       
+                + logTau   
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel4_ce)
+
+##effect plot
+plot(Effect(c("logCentiloidplus","logTau"), logmodel4_ce,
+      partial.residuals = TRUE),
+     partial.residual=list(col="black")
+     , xlab = "log Centiloid (residualized)"
+     , ylab = "CEREB x CEREB Connectivity (residualized)"
+     , main = "")
+
+#Model 5 - FC ~ Centiloid group x Tau (and covariates)
+##linear regression for logTau
+logmodel5_ce = lm(CEREB_x_CEREB ~ centCategory*logTau
+                + centCategory
+                + logTau
+                + age_tau 
+                + EDUC 
+                + GENDER 
+                + mean_FD_pre_threshold
+                , data = data2)
+summary(logmodel5_ce)
+
+##effect plot
+plot(Effect(c("centCategory","logTau"), logmodel5_ce,
+      partial.residuals = TRUE),
+     partial.residual=list()
+     , xlab = "log Tau (residualized)"
+     , ylab = "CEREB x CEREB Connectivity (residualized)"
+     , main = "")
+```
+
+##CEREB + non-Schultz statistics table
+```{r}
+lm1_ce <- convert_tbl(logmodel1p_ce)
+lm2_ce <- convert_tbl(logmodel2_ce)
+lm3_ce <- convert_tbl(logmodel3_ce)
+lm4_ce <- convert_tbl(logmodel4_ce)
+lm5_ce <- convert_tbl(logmodel5_ce)
+
+schultz_large_ce <-rbind(lm1_ce, lm2_ce, lm3_ce, lm4_ce, lm5_ce) #combine lms by row
+schultz_medium_ce <- schultz_large_ce[-2][-2][-1] #extract the vars of interest (t-stat and p-val)
+schultz_small_ce <- schultz_medium_ce %>%
+                  slice(2,8,14,15,27,35) #extract specific regressors of interest
+
+
+schultz_final_ce <- schultz_small_ce %>%
+  mutate(significance = case_when(p.value <= 0.001 ~ "***"
+                                  ,p.value <= 0.01 ~ "**"
+                                  ,p.value <= 0.05 ~ "*"
+                                  ,p.value <= 0.1 ~"."
+                                  ,p.value < 1 ~ " ")
+         ,across(where(is.numeric), ~round(.,4))
+)
+
+non_schultz_update = cbind(schultz_final_na, schultz_final_sm,
+                           schultz_final_sm_lat, schultz_final_co,
+                           schultz_final_aud, schultz_final_mem,
+                           schultz_final_vis, schultz_final_sub,
+                           schultz_final_van, schultz_final_ce)
+
+non_schultz_update <- data.frame(m = c("Model 1: Centiloid", "Model 2: Tau", "Model 3: Centiloid",
+                   "Model 3: Tau", "Model 4: Centiloid x Tau (continuous)", "Model 5: Centiloid Group x Tau")
+                   , non_schultz_update, check.names = FALSE)
+
+
+colnames(non_schultz_update)[1] <- ""
+
+
+kable(non_schultz_update) %>% #,  format = "html")
+  kable_styling(c("striped", "bordered"), full_width = F) %>%
+  add_header_above(c(' ', 'NA' = 3, 'SM' = 3, 'SM lat' = 3, 'CO' = 3,
+                     'AUD' = 3, 'MEM' = 3, 'VIS' = 3, 'SUBcort' = 3,
+                     'VAN' = 3, 'CEREB' = 3)) #%>% save_kable(file = "non_schultz.png")
+#webshot::install_phantomjs(force = TRUE)
+#webshot::webshot("file:///c:/Users/singhen/table_1A.html", "table_1A.png")
+```
+
+
+#End
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

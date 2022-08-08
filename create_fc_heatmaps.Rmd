@@ -1,0 +1,179 @@
+---
+title: "create_heatmaps"
+author: "Nawang Singhe & Peter Millar"
+date: "July 20, 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#model 3: fc ~ centiloid and tau (main fx only)
+```{r}
+# read csv files #
+m3_raw_cent = read.csv("m3_raw_centiloid.csv", row.names = 1)
+m3_log_cent = read.csv("m3_log_centiloid.csv", row.names = 1)
+m3_raw_tau = read.csv("m3_raw_tau.csv", row.names = 1)
+m3_log_tau = read.csv("m3_log_tau.csv", row.names = 1)
+
+
+bcyor = colorRampPalette(c("blue","cyan", "yellow", "orange", "red"))(256)
+bcyr = colorRampPalette(c("blue","cyan", "yellow", "red"))(256)
+bwr = colorRampPalette(c("blue", "white", "red"))(256)
+
+dev.new()
+
+#m3 raw cent
+png("m3_raw_cent.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m3_raw_cent[c(nrow(m3_raw_cent):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 log cent
+png("m3_log_cent.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m3_log_cent[c(nrow(m3_log_cent):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 raw tau
+png("m3_raw_tau.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m3_raw_tau[c(nrow(m3_raw_tau):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1),  
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 log tau
+png("m3_log_tau.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m3_log_tau[c(nrow(m3_log_tau):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+
+```
+
+#model 4: centiloid x tau interaction (continuous)
+```{r}
+m4_raw = read.csv("m4_raw.csv", row.names = 1)
+m4_log = read.csv("m4_log.csv", row.names = 1)
+
+#m4 continuous interaction, raw values
+png("m4_raw.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m4_raw[c(nrow(m4_raw):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m4 continuous interaction, log values
+png("m4_log.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m4_log[c(nrow(m4_log):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+```
+
+#model 5 centiloid x tau interaction (binarized)
+```{r}
+m5_raw = read.csv("m5_raw.csv", row.names = 1)
+m5_log = read.csv("m5_log.csv", row.names = 1)
+
+#m5 continuous interaction, raw values
+png("m5_raw.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m5_raw[c(nrow(m5_raw):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m5 continuous interaction, log values
+png("m5_log.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(m5_log[c(nrow(m5_log):1), ])), 
+          col.regions = bwr, at = seq(-4, 4, .1), 
+          #col.regions = bcyor, at = seq(-2.6, 2.9, .01),
+          #col.regions = bcyr, at = seq(-2.6, 2.9, .1), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+
+```
+
+
+#create heat map of p-vals
+```{r}
+### pre correction ###
+#m3 log cent
+png("petmr_pval3lcent.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(petmr_pval3lcent[c(nrow(petmr_pval3lcent):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m3 log tau
+png("petmr_pval3ltau.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(petmr_pval3ltau[c(nrow(petmr_pval3ltau):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01),
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m4 log cont. interaxn
+png("petmr_pval4l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(petmr_pval4l[c(nrow(petmr_pval4l):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01),
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+#m5 log bin. interaxn
+png("petmr_pval5l.png", height = 400, width = 400) #used to save file to png output
+levelplot(t(as.matrix(petmr_pval5l[c(nrow(petmr_pval5l):1), ])), 
+          col.regions = ry, at = seq(0, 0.05, .01),
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+
+###post-correction
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

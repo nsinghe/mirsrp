@@ -1,0 +1,381 @@
+---
+title: "FC_Heatmap_Example"
+author: "Pete Millar & Nawang Singhe"
+date: '2022-07-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Clear workspace
+```{r}
+rm(list=ls())
+```
+#load packages
+```{r}
+pacman::p_load(mclust,MineICA,sBIC, jtools, psych, cowplot, multcomp, ggplot2, patchwork, data.table, readxl, DescTools, lattice, tidyverse, boot, table1, ggpubr, effects, kableExtra, magick, webshot, install = TRUE)
+```
+
+###FC Matrix
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+#load network level FC matrix
+##This one has been pregenerated, but the goal would be for you to create a new one
+##consisting of t values of the parameters of interest (amyloid, tau, amyloid*tau)
+##from the regression models of interest (3, 4, and 5. you can forget model 1)
+rs_fcmat = read.csv("fcmat_254.csv", row.names = 1)
+
+#library(lattice) #package for levelplot() function
+##define colormap (these can be tweaked to optimize presentation)
+bcyor = colorRampPalette(c("blue","cyan", "yellow", "orange", "red"))(256)
+bcyr = colorRampPalette(c("blue","cyan", "yellow", "red"))(256)
+bwr = colorRampPalette(c("blue", "white", "red"))(256)
+#rs_fcmatrix = as.matrix(rs_fcmat[,2:14])
+#rownames(rs_fcmatrix) = 
+
+#png("rs_fcmat_254_bwr.png", height = 400, width = 400)
+#png("rs_fcmat_254_bcyor.png", height = 400, width = 400)
+png("rs_fcmat_254_bcyr.png", height = 400, width = 400) #used to save file to png output
+
+levelplot(t(as.matrix(rs_fcmat[c(nrow(rs_fcmat):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-.3, .7, .01), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+```
+
+#define data frames and variables
+```{r}
+#df with necessary variables
+hm_data <- data
+maxNeg = min(hm_data$Centiloid_merge)
+hm_data <- hm_data %>%
+  mutate(age_tau=abs(as.Date(BIRTH,format = "%m/%d/%Y")-as.Date(date_tau,format = "%m/%d/%Y"))/365.25) %>%
+  mutate(logCentiloidplus = log(Centiloid_merge - maxNeg + 3)) %>%
+  mutate(logTau = log(Tauopathy)) -> hm_data
+
+hm_data$centCategory <- cut(hm_data$Centiloid_merge, breaks = c(-Inf, 20.6, +Inf), labels = c("Cent-", "Cent+"))
+table(hm_data$centCategory)
+
+hm_data$at_int = hm_data$Centiloid_merge * hm_data$Tauopathy
+hm_data$logat_int = hm_data$logCentiloidplus * hm_data$logTau
+
+hm_final = hm_data %>% dplyr::select(MAPID,
+                                     mean_FD_pre_threshold, GENDER, EDUC, age_tau, #covariates
+                                     NA_x_NA:CEREB_x_CEREB, #networks
+                                     Centiloid_merge, Tauopathy, #raw values
+                                     logCentiloidplus, logTau, #log values
+                                     centCategory, #binarization
+                                     at_int, logat_int) #for reproducing Schultz fig. 1
+#create a list of dependent variables
+df_networks <- hm_final %>%
+  ungroup() %>%
+  dplyr::select(NA_x_NA:CEREB_x_CEREB)
+dep.vars <- colnames(df_networks)
+
+#create function for heatmaps
+empty_matrix <- data.frame(matrix(ncol = 14, nrow = 14))
+dim <- c('na', 'sm', 'sm_lat', 'co', 'aud', 'dmn', 'mem',
+         'vis', 'fp', 'sal', 'SUBCort', 'van', 'dan', 'cereb')
+
+```
+
+#define functions
+```{r}
+### initialize matrix ###
+make_hm <- function() {
+  new_matrix <- empty_matrix
+  colnames(new_matrix) <- dim
+  row.names(new_matrix) <- dim
+  return( new_matrix)
+}
+
+### run models for raw values ###
+run_model3 <- function(dep.var) {
+    fml <- reformulate(c("Centiloid_merge", "Tauopathy", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+run_model4 <- function(dep.var) {
+    fml <- reformulate(c("Centiloid_merge*Tauopathy", "Centiloid_merge", "Tauopathy", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+run_model5 <- function(dep.var) {
+    fml <- reformulate(c("centCategory*Tauopathy", "centCategory", "Tauopathy", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+### run models for log values ###
+run_logmodel3 <- function(dep.var) {
+    fml <- reformulate(c("logCentiloidplus", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+run_logmodel4 <- function(dep.var) {
+    fml <- reformulate(c("logCentiloidplus*logTau", "logCentiloidplus", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+run_logmodel5 <- function(dep.var) {
+    fml <- reformulate(c("centCategory*logTau", "centCategory", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+### convert summary to table ###
+convert_tbl <- function(tbl) {
+  tidy_tbl <- tidy(tbl)
+  tbl <- as.data.frame(tidy_tbl)
+  return(tbl)
+}
+```
+
+
+#model 3: heatmap of centiloid and tau (main effects only)
+```{r}
+# LM SUMMARIES #
+
+### raw values ###
+raw_model3 <- sapply(dep.vars, run_model3, simplify = FALSE)
+rm3_summaries <- lapply(raw_model3, summary)
+rm3_summaries$NA_x_NA #sanity check
+
+### log values ###
+log_model3 <- sapply(dep.vars, run_logmodel3, simplify = FALSE)
+lm3_summaries <- lapply(log_model3, summary)
+lm3_summaries$NA_x_NA #sanity check
+
+# POPULATE HEATMAP MATRICES #
+hm_raw_m3 <- make_hm()
+hm_log_m3 <- make_hm()
+
+hm_raw_m3_tau <- make_hm()
+hm_log_m3_tau <- make_hm()
+
+### extract centiloid t-statistics from raw models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(raw_model3[[index]])
+      t_val <- lm[2,4]
+      hm_raw_m3[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_raw_m3[i,j] = update_index
+      lm <- convert_tbl(raw_model3[[update_index]])
+      t_val <- lm[2,4]
+      hm_raw_m3[i,j] = t_val
+      hm_raw_m3[j,i] = hm_raw_m3[i,j]
+    }
+  }
+}
+
+### extract centiloid t-statistics from log models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(log_model3[[index]])
+      t_val <- lm[2,4]
+      hm_log_m3[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_log_m3[i,j] = update_index
+      lm <- convert_tbl(log_model3[[update_index]])
+      t_val <- lm[2,4]
+      hm_log_m3[i,j] = t_val
+      hm_log_m3[j,i] = hm_log_m3[i,j]
+    }
+  }
+}
+
+### extract tau t-statistics from raw models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(raw_model3[[index]])
+      t_val <- lm[3,4]
+      hm_raw_m3_tau[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_raw_m3_tau[i,j] = update_index
+      lm <- convert_tbl(raw_model3[[update_index]])
+      t_val <- lm[3,4]
+      hm_raw_m3_tau[i,j] = t_val
+      hm_raw_m3_tau[j,i] = hm_raw_m3_tau[i,j]
+    }
+  }
+}
+
+### extract tau t-statistics from log models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(log_model3[[index]])
+      t_val <- lm[3,4]
+      hm_log_m3_tau[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_log_m3_tau[i,j] = update_index
+      lm <- convert_tbl(log_model3[[update_index]])
+      t_val <- lm[3,4]
+      hm_log_m3_tau[i,j] = t_val
+      hm_log_m3_tau[j,i] = hm_log_m3_tau[i,j]
+    }
+  }
+}
+```
+
+#model 4: heatmap of continuous interaction
+```{r}
+### raw values ###
+raw_model4 <- sapply(dep.vars, run_model4, simplify = FALSE)
+rm4_summaries <- lapply(raw_model4, summary)
+rm4_summaries$NA_x_NA #sanity check
+
+### log values ###
+log_model4 <- sapply(dep.vars, run_logmodel4, simplify = FALSE)
+lm4_summaries <- lapply(log_model4, summary)
+lm4_summaries$DMN_x_DMN #sanity check
+
+# POPULATE HEATMAP MATRICES #
+hm_raw_m4 <- make_hm()
+hm_log_m4 <- make_hm()
+
+### extract centiloid*tau interaction t-statistic from raw models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(raw_model4[[index]])
+      t_val <- lm[2,4]
+      hm_raw_m4[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_raw_m4[i,j] = update_index
+      lm <- convert_tbl(raw_model4[[update_index]])
+      t_val <- lm[2,4]
+      hm_raw_m4[i,j] = t_val
+      hm_raw_m4[j,i] = hm_raw_m4[i,j]
+    }
+  }
+}
+
+### extract centiloid*tau interaction t-statistic from log models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(log_model4[[index]])
+      t_val <- lm[2,4]
+      hm_log_m4[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_log_m4[i,j] = update_index
+      lm <- convert_tbl(log_model4[[update_index]])
+      t_val <- lm[2,4]
+      hm_log_m4[i,j] = t_val
+      hm_log_m4[j,i] = hm_log_m4[i,j]
+    }
+  }
+}
+```
+
+#model 5: heatmap of binarized interaction
+
+```{r}
+### raw values ###
+raw_model5 <- sapply(dep.vars, run_model5, simplify = FALSE)
+rm5_summaries <- lapply(raw_model5, summary)
+rm5_summaries$NA_x_NA #sanity check
+
+### log values ###
+log_model5 <- sapply(dep.vars, run_logmodel5, simplify = FALSE)
+lm5_summaries <- lapply(log_model5, summary)
+lm5_summaries$DMN_x_DMN #sanity check
+
+# POPULATE HEATMAP MATRICES #
+hm_raw_m5 <- make_hm()
+hm_log_m5 <- make_hm()
+
+### extract centiloid(category)*tau interaction t-statistic from raw models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(raw_model5[[index]])
+      t_val <- lm[2,4]
+      hm_raw_m5[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_raw_m5[i,j] = update_index
+      lm <- convert_tbl(raw_model5[[update_index]])
+      t_val <- lm[2,4]
+      hm_raw_m5[i,j] = t_val
+      hm_raw_m5[j,i] = hm_raw_m5[i,j]
+    }
+  }
+}
+
+### extract centiloid(category)*tau interaction t-statistic from log models ###
+for (i in 1:nrow(empty_matrix)) {
+  index = 0.5 * (-i^2 + 31*i - 28)
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      lm <- convert_tbl(log_model5[[index]])
+      t_val <- lm[2,4]
+      hm_log_m5[i, j] = t_val
+   }
+    if (i < j) {
+      update_index = index + j - i
+      hm_log_m5[i,j] = update_index
+      lm <- convert_tbl(log_model5[[update_index]])
+      t_val <- lm[2,4]
+      hm_log_m5[i,j] = t_val
+      hm_log_m5[j,i] = hm_log_m5[i,j]
+    }
+  }
+}
+```
+
+
+#all models: create csv files
+```{r}
+# Write csv files #
+write.csv(hm_raw_m3,file.path(out_path, "m3_raw_centiloid.csv"), row.names = TRUE)
+write.csv(hm_log_m3,file.path(out_path, "m3_log_centiloid.csv"), row.names = TRUE)
+write.csv(hm_raw_m3_tau,file.path(out_path, "m3_raw_tau.csv"), row.names = TRUE)
+write.csv(hm_log_m3_tau,file.path(out_path, "m3_log_tau.csv"), row.names = TRUE)
+
+write.csv(hm_raw_m4,file.path(out_path, "m4_raw.csv"), row.names = TRUE)
+write.csv(hm_log_m4,file.path(out_path, "m4_log.csv"), row.names = TRUE)
+
+write.csv(hm_raw_m5,file.path(out_path, "m5_raw.csv"), row.names = TRUE)
+write.csv(hm_log_m5,file.path(out_path, "m5_log.csv"), row.names = TRUE)
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

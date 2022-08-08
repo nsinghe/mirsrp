@@ -1,0 +1,62 @@
+---
+title: "FC_Heatmap_Example"
+author: "Pete Millar & Nawang Singhe"
+date: '2022-07-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##FC Matrix
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+#load network level FC matrix
+##This one has been pregenerated, but the goal would be for you to create a new one
+##consisting of t values of the parameters of interest (amyloid, tau, amyloid*tau)
+##from the regression models of interest (3, 4, and 5. you can forget model 1)
+rs_fcmat = read.csv("fcmat_254.csv", row.names = 1)
+
+library(lattice) #package for levelplot() function
+##define colormap (these can be tweaked to optimize presentation)
+bcyor = colorRampPalette(c("blue","cyan", "yellow", "orange", "red"))(256)
+bcyr = colorRampPalette(c("blue","cyan", "yellow", "red"))(256)
+bwr = colorRampPalette(c("blue", "white", "red"))(256)
+#rs_fcmatrix = as.matrix(rs_fcmat[,2:14])
+#rownames(rs_fcmatrix) = 
+
+#png("rs_fcmat_254_bwr.png", height = 400, width = 400)
+#png("rs_fcmat_254_bcyor.png", height = 400, width = 400)
+png("rs_fcmat_254_bcyr.png", height = 400, width = 400) #used to save file to png output
+
+levelplot(t(as.matrix(rs_fcmat[c(nrow(rs_fcmat):1), ])), 
+          #col.regions = bwr, at = seq(-.6, .6, .01), 
+          #col.regions = bcyor, at = seq(-.2, .6, .01),
+          col.regions = bcyr, at = seq(-.3, .7, .01), 
+          scale=list(x=list(rot=90))
+          , xlab = "", ylab = ""
+          )
+dev.off() #end function to save output to png
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
