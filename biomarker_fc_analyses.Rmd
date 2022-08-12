@@ -89,6 +89,12 @@ df_fc = read.csv(file.path(fc_path, "Ances298network_ADRC_PETMR_DF_2207.csv"))%>
 df_apoe = read_excel(file.path(df_path, "AD_DF_2022/module_freeze_nov21/genetics_nov21/apoe.xlsx"))%>%
   mutate(MAPID = as.factor(ID))
 
+df_cog = read_excel(file.path(df_path, "AD_DF_2022/module_freeze_nov21/clinical_core_nov21/psychometrics.xlsx"))%>%
+  mutate(MAPID = as.factor(ID))%>%
+  mutate(date_cog = psy_date)
+
+df_cog = subset(df_cog, select = -ID)
+
 #SANITY CHECK FOR FIXING PEOPLE NOT BORN YET
 #class(df_fc$BIRTH)
 df_fc$BIRTH = as.Date(df_fc$BIRTH, format = "%m/%d/%Y")
@@ -146,6 +152,13 @@ tau_data_merge <- merge(tau_data_merge, df_apoe, by="MAPID", all.x = TRUE) #%>%
 #as.numeric(tau_data_merge$abs_diff_fc)
 
 #Dimensions should be 729 obs of 3386 variables (as of 6/28)
+
+tau_data_merge <- merge(tau_data_merge, df_cog, by="MAPID", all.x = TRUE) %>%
+  mutate(abs_diff_cog=abs(as.Date(date_cog)-as.Date(date_tau))) %>%
+  #filter(abs_diff < (365.25*3)) %>% 
+  arrange(abs_diff_cog) %>% 
+  dplyr::group_by(MAPID, date_tau) %>% 
+  dplyr::slice(1)
 
 ```
 
@@ -231,9 +244,12 @@ hist(as.numeric(tau_data_merge$abs_diff_fc)/365.25
 data = tau_data_merge%>%
   filter(abs_diff_cdr < (365.25*4))%>%
   filter(abs_diff_cent < (365.25*4))%>%
-  filter(abs_diff_fc < (365.25*4))%>%
+  filter(abs_diff_fc < (365.25*7))%>%
   filter(is.na(Tauopathy)==FALSE)%>% #Exclude participants missing "Tauopathy" summary
   filter(is.na(Centiloid_merge)==FALSE)
+
+data_cdr = tau_data_merge%>%
+  filter(abs_diff_cdr < (365.25*4))
 
 hist(data$BOLD_time_remaining/60
      , xlab = "Minutes", main = "BOLD Time Remaining")
@@ -246,14 +262,30 @@ data = data%>%
   dplyr::arrange(date_tau)%>%
   dplyr::mutate(visit_final = cumsum(count_final))
 
+data_cdr = data_cdr%>%
+  dplyr::mutate(count_final = "1")%>%
+  dplyr::group_by(MAPID)%>%
+  dplyr::arrange(date_fc)%>%
+  dplyr::mutate(visit_final = cumsum(count_final))
+
 #Check CDR and exclude cognitively impaired
 table(data$CDR, data$visit_final)
+table(data_cdr$CDR, data_cdr$visit_final)
 
 data = data%>%
   filter(CDR == 0)%>%
   filter(visit_final == 1)
+#FINAL SAMPLE = 187 WITH 4 YEAR CUTOFF
+#FINAL SAMPLE = 190 WITH 7 YEAR CUTOFF
 
-#FINAL SAMPLE = 187
+data_cdr = data_cdr%>%
+  filter(CDR > 0)%>%
+  filter(visit_final == 1)
+#FINAL SAMPLE = 25
+
+data_cdr01 <- rbind(data, data_cdr)
+#FINAL SAMPLE = 187 + 25 = 212
+
 
 hist(data$Tauopathy,
      xlab = "SUVR", main = "Tau PET Summary")
@@ -279,6 +311,12 @@ data2 <- data %>%
   mutate(age_tau=abs(as.Date(BIRTH,format = "%m/%d/%Y")-as.Date(date_tau,format = "%m/%d/%Y"))/365.25)
   #age_tau = age_tau/365.25
 data2$age_tau <- as.numeric(data2$age_tau)
+
+data_cdr01 <- data_cdr01 %>%
+  mutate(age_tau=abs(as.Date(BIRTH,format = "%m/%d/%Y")-as.Date(date_tau,format = "%m/%d/%Y"))/365.25)
+  #age_tau = age_tau/365.25
+data_cdr01$age_tau <- as.numeric(data_cdr01$age_tau)
+
 #hist(data2$age_tau,
 #     xlab = "years", main = "age dist.",
 #     breaks = 50)
@@ -3194,6 +3232,641 @@ kable(non_schultz_update) %>% #,  format = "html")
 #webshot::webshot("file:///c:/Users/singhen/table_1A.html", "table_1A.png")
 ```
 
+#extended analysis after final presentation
+```{r}
+#create a new grouping
+
+data_cdr01$PibCategory <- cut(data_cdr01$pib_fsuvr_rsf_tot_cortmean, breaks = c(-Inf, 1.42, +Inf), labels = c("Aneg", "Apos"))
+data_cdr01$av45Category <- cut(data_cdr01$av45_fsuvr_rsf_tot_cortmean, breaks = c(-Inf, 1.19, +Inf), labels = c("Aneg", "Apos"))
+
+data_cdr01$AmyloidCategory <-with(data_cdr01, ifelse(
+                                    cent_tracer == 'PiB' & PibCategory == 'Apos', 'Apos', ifelse(
+                                    cent_tracer == 'PiB' & PibCategory == 'Aneg', 'Aneg', ifelse(
+                                    cent_tracer == 'AV45' & av45Category == 'Apos', 'Apos', ifelse(
+                                    cent_tracer == 'AV45' & av45Category == 'Aneg', 'Aneg', 'NA')))))
+
+
+data_cdr01$TauCategory <- cut(data_cdr01$Tauopathy, breaks = c(-Inf, 1.22, +Inf), labels = c("TauNegative", "TauPositive")) 
+table(data_cdr01$TauCategory) #124 TauNeg & 86 TauPos
+
+data_cdr01$AmyloidTauCategory <-with(data_cdr01, ifelse(
+                                    AmyloidCategory == 'Aneg' & Tauopathy < 1.22 & CDR == 0, 'A-T-', ifelse(
+                                    AmyloidCategory == 'Apos' & Tauopathy < 1.22 & CDR == 0, 'A+T-', ifelse(
+                                    AmyloidCategory == 'Aneg' & Tauopathy > 1.22 & CDR == 0, 'A-T+', ifelse(
+                                    AmyloidCategory == 'Apos' & Tauopathy > 1.22 & CDR == 0, 'A+T+', 'Symptomatic AD')
+                      ))))
+table(data_cdr01$AmyloidTauCategory) # 100 A-T-, 36 A-T+, 17 A+T-, 34 A+T+, 25 Symptomatic AD
+
+
+```
+##SAL
+```{r}
+#SAL x SAL analysis
+kruskal.test(data_cdr01$SAL_x_SAL ~ data_cdr01$AmyloidTauCategory,  data = data_cdr01)
+compare_means(SAL_x_SAL ~ AmyloidTauCategory,  data = data_cdr01, method = "wilcox")
+my_comparisons <- list( #c("A-T-", "A+T-"), c("A+T-", "A+T+"), c("A-T-", "A+T+"),
+  # c("A-T-", "A+T-")
+  #, c("A+T-", "A+T+"), 
+  #c("A-T-", "A+T+")
+  #, c("A+T+", "CDR > 0"), c("A+T-", "CDR > 0"), c("A-T-", "CDR > 0")
+  c("A-T-", "A-T+"), c("A-T+", "A+T-")
+  #c("A+T-", "A+T+"), 
+  #c("A-T-", "Symptomatic AD"), c("A+T-", "Symptomatic AD"), c("Symptomatic AD", "A+T+")
+  
+)
+
+#Violin Plot of SAL x SAL
+p<-ggplot(data_cdr01, aes(x=AmyloidTauCategory, y=SAL_x_SAL, fill=AmyloidTauCategory)) +
+  labs(title="SAL FC",x="", y = "SAL x SAL FC") +
+  geom_violin(trim=FALSE, color = "black") + 
+  scale_fill_manual(breaks=c("A-T-", "A+T-", "A-T+", "A+T+", "Symptomatic AD"),
+                    values=c("blue", "yellow", "forestgreen", "orange", "red")) +
+  
+  #geom_hline(yintercept = 0, linetype = "longdash") +
+  geom_boxplot(width=0.3, color = "black") +
+  geom_jitter(shape=16, position=position_jitter(0.05)) +
+  stat_compare_means(comparisons = my_comparisons, method = "wilcox"
+                     , aes(label = ..p..)
+  )+ # Add pairwise comparisons p-value
+  #stat_compare_means(label.y = 50)+     # Add global p-value
+  #ylim(min(-30), max(40)) + 
+  theme_classic(base_size = 15) +
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5))
+p
+ggsave('SAL_violin_plot.png', width = 5, height = 5, units = "in", dpi = 320)
+
+
+
+```
+
+##DAN
+```{r}
+#DAN x DAN analysis
+kruskal.test(data_cdr01$DAN_x_DAN ~ data_cdr01$AmyloidTauCategory,  data = data_cdr01)
+compare_means(DAN_x_DAN ~ AmyloidTauCategory,  data = data_cdr01, method = "wilcox")
+my_comparisons <- list( #c("A-T-", "A+T-"), c("A+T-", "A+T+"), c("A-T-", "A+T+"),
+  # c("A-T-", "A+T-")
+  #, c("A+T-", "A+T+"), 
+  #c("A-T-", "A+T+")
+  #, c("A+T+", "CDR > 0"), c("A+T-", "CDR > 0"), c("A-T-", "CDR > 0")
+  #c("A-T-", "A-T+"), c("A-T+", "A+T-")
+  #c("A+T-", "A+T+"), 
+  #c("A-T-", "Symptomatic AD"), c("A+T-", "Symptomatic AD"), c("Symptomatic AD", "A+T+")
+  
+)
+
+#Violin Plot of DAN x DAN
+p<-ggplot(data_cdr01, aes(x=AmyloidTauCategory, y=DAN_x_DAN, fill=AmyloidTauCategory)) +
+  labs(title="DAN FC",x="", y = "DAN x DAN FC") +
+  geom_violin(trim=FALSE, color = "black") + 
+  scale_fill_manual(breaks=c("A-T-", "A+T-", "A-T+", "A+T+", "Symptomatic AD"),
+                    values=c("blue", "yellow", "forestgreen", "orange", "red")) +
+  
+  #geom_hline(yintercept = 0, linetype = "longdash") +
+  geom_boxplot(width=0.3, color = "black") +
+  geom_jitter(shape=16, position=position_jitter(0.05)) +
+  stat_compare_means(comparisons = my_comparisons, method = "wilcox"
+                     , aes(label = ..p..)
+  )+ # Add pairwise comparisons p-value
+  #stat_compare_means(label.y = 50)+     # Add global p-value
+  #ylim(min(-30), max(40)) + 
+  theme_classic(base_size = 15) +
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5))
+p
+ggsave('DAN_violin_plot.png', width = 5, height = 5, units = "in", dpi = 320)
+```
+
+##DMN
+```{r}
+#DMN x DMN analysis
+kruskal.test(data_cdr01$DMN_x_DMN ~ data_cdr01$AmyloidTauCategory,  data = data_cdr01)
+compare_means(DMN_x_DMN ~ AmyloidTauCategory,  data = data_cdr01, method = "wilcox")
+my_comparisons <- list( #c("A-T-", "A+T-"), c("A+T-", "A+T+"), c("A-T-", "A+T+"),
+  # c("A-T-", "A+T-")
+  #, c("A+T-", "A+T+"), 
+  #c("A-T-", "A+T+")
+  #, c("A+T+", "CDR > 0"), c("A+T-", "CDR > 0"), c("A-T-", "CDR > 0")
+  #c("A-T-", "A-T+"), c("A-T+", "A+T-")
+  #c("A+T-", "A+T+"), 
+  #c("A-T-", "Symptomatic AD"), c("A+T-", "Symptomatic AD"), c("Symptomatic AD", "A+T+")
+  
+)
+
+#Violin Plot of DMN x DMN
+p<-ggplot(data_cdr01, aes(x=AmyloidTauCategory, y=DMN_x_DMN, fill=AmyloidTauCategory)) +
+  labs(title="DMN FC",x="", y = "DMN x DMN FC") +
+  geom_violin(trim=FALSE, color = "black") + 
+  scale_fill_manual(breaks=c("A-T-", "A+T-", "A-T+", "A+T+", "Symptomatic AD"),
+                    values=c("blue", "yellow", "forestgreen", "orange", "red")) +
+  
+  #geom_hline(yintercept = 0, linetype = "longdash") +
+  geom_boxplot(width=0.3, color = "black") +
+  geom_jitter(shape=16, position=position_jitter(0.05)) +
+  stat_compare_means(comparisons = my_comparisons, method = "wilcox"
+                     , aes(label = ..p..)
+  )+ # Add pairwise comparisons p-value
+  #stat_compare_means(label.y = 50)+     # Add global p-value
+  #ylim(min(-30), max(40)) + 
+  theme_classic(base_size = 15) +
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5))
+p
+ggsave('DMN_violin_plot.png', width = 5, height = 5, units = "in", dpi = 320)
+```
+## CO
+```{r}
+kruskal.test(data_cdr01$CO_x_CO ~ data_cdr01$AmyloidTauCategory,  data = data_cdr01)
+compare_means(CO_x_CO ~ AmyloidTauCategory,  data = data_cdr01, method = "wilcox")
+my_comparisons <- list( #c("A-T-", "A+T-"), c("A+T-", "A+T+"), c("A-T-", "A+T+"),
+  # c("A-T-", "A+T-")
+  #, c("A+T-", "A+T+"), 
+  #c("A-T-", "A+T+")
+  #, c("A+T+", "CDR > 0"), c("A+T-", "CDR > 0"), c("A-T-", "CDR > 0")
+  c("A-T-", "A-T+"), c("A-T-", "Symptomatic AD"), c("A+T-", "Symptomatic AD")
+)
+
+#Violin Plot of CO x CO
+p<-ggplot(data_cdr01, aes(x=AmyloidTauCategory, y=CO_x_CO, fill=AmyloidTauCategory)) +
+  labs(title="PETMR DATASET: CO FC",x="", y = "CO x CO FC") +
+  geom_violin(trim=FALSE, color = "black") + 
+  scale_fill_manual(breaks=c("A-T-", "A+T-", "A-T+", "A+T+", "Symptomatic AD"),
+                    values=c("blue", "yellow", "forestgreen", "orange", "red")) +
+  
+  #geom_hline(yintercept = 0, linetype = "longdash") +
+  geom_boxplot(width=0.3, color = "black") +
+  geom_jitter(shape=16, position=position_jitter(0.05)) +
+  stat_compare_means(comparisons = my_comparisons, method = "wilcox"
+                     , aes(label = ..p..)
+  )+ # Add pairwise comparisons p-value
+  #stat_compare_means(label.y = 50)+     # Add global p-value
+  #ylim(min(-30), max(40)) + 
+  theme_classic(base_size = 15) +
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5))
+p
+ggsave('DMN_violin_plot.png', width = 5, height = 5, units = "in", dpi = 320)
+```
+
+## FP
+```{r}
+kruskal.test(data_cdr01$FP_x_FP ~ data_cdr01$AmyloidTauCategory,  data = data_cdr01)
+compare_means(FP_x_FP ~ AmyloidTauCategory,  data = data_cdr01, method = "wilcox")
+my_comparisons <- list( #c("A-T-", "A+T-"), c("A+T-", "A+T+"), c("A-T-", "A+T+"),
+  # c("A-T-", "A+T-")
+  #, c("A+T-", "A+T+"), 
+  #c("A-T-", "A+T+")
+  #, c("A+T+", "CDR > 0"), c("A+T-", "CDR > 0"), c("A-T-", "CDR > 0")
+  #c("A-T-", "A+T-"), c("A+T-", "Symptomatic AD")
+)
+
+#Violin Plot of CO x CO
+p<-ggplot(data_cdr01, aes(x=AmyloidTauCategory, y=FP_x_FP, fill=AmyloidTauCategory)) +
+  labs(title="FP FC",x="", y = "FP x FP FC") +
+  geom_violin(trim=FALSE, color = "black") + 
+  scale_fill_manual(breaks=c("A-T-", "A+T-", "A-T+", "A+T+", "Symptomatic AD"),
+                    values=c("blue", "yellow", "forestgreen", "orange", "red")) +
+  
+  #geom_hline(yintercept = 0, linetype = "longdash") +
+  geom_boxplot(width=0.3, color = "black") +
+  geom_jitter(shape=16, position=position_jitter(0.05)) +
+  stat_compare_means(comparisons = my_comparisons, method = "wilcox"
+                     , aes(label = ..p..)
+  )+ # Add pairwise comparisons p-value
+  #stat_compare_means(label.y = 50)+     # Add global p-value
+  #ylim(min(-30), max(40)) + 
+  theme_classic(base_size = 15) +
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5))
+p
+ggsave('FP_violin_plot.png', width = 5, height = 5, units = "in", dpi = 320)
+```
+
+#cognitive analyses
+```{r}
+#Basic code to form cognitive composite from individual measures
+#Global Composite
+#srtfree, Trails A, Trails B, ANIMALS Naming
+data_cdr01$z_global_srt = scale(data_cdr01$srtfree)
+data_cdr01$z_global_animal = scale(data_cdr01$ANIMALS)
+data_cdr01$z_global_tma = -1*(scale(data_cdr01$tma))
+data_cdr01$z_global_tmb = -1*(scale(data_cdr01$tmb))
+
+data_cdr01$global_comp <- rowMeans(subset(data_cdr01, select = c(
+  z_global_srt,
+  z_global_animal,
+  z_global_tma,
+  z_global_tmb
+  )), na.rm = TRUE)
+
+
+```
+##DMN
+```{r}
+#Regression model to test interactive relationship between cognition and FC measure across different clinical groups (e.g., A-T-, A+T-, etc)
+cog_error_fc_cdr = lm((global_comp) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*DMN_x_DMN
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01)
+summary(cog_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01, aes(y = global_comp, x = DMN_x_DMN))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual DMN x DMN", y = "Global Cognition (composite)") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.85, 0.21), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##SAL
+```{r}
+#Regression model to test interactive relationship between cognition and FC measure across different clinical groups (e.g., A-T-, A+T-, etc)
+cog_error_fc_cdr = lm((global_comp) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*SAL_x_SAL
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01)
+summary(cog_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01, aes(y = global_comp, x = SAL_x_SAL))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual SAL x SAL", y = "Global Cognition (composite)") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.85, 0.21), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##DAN
+```{r}
+#Regression model to test interactive relationship between cognition and FC measure across different clinical groups (e.g., A-T-, A+T-, etc)
+cog_error_fc_cdr = lm((global_comp) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*DAN_x_DAN
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01)
+summary(cog_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01, aes(y = global_comp, x = DAN_x_DAN))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual DAN x DAN", y = "Global Cognition (composite)") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.85, 0.21), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##CO
+```{r}
+cog_error_fc_cdr = lm((global_comp) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*CO_x_CO
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01)
+summary(cog_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01, aes(y = global_comp, x = CO_x_CO))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual CO x CO", y = "Global Cognition (composite)") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.85, 0.21), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##FP
+```{r}
+cog_error_fc_cdr = lm((global_comp) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*FP_x_FP
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01)
+summary(cog_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01, aes(y = global_comp, x = FP_x_FP))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual FP x FP", y = "Global Cognition (composite)") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.85, 0.21), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+
+#CSF biomarker analysis
+```{r}
+hist(data_cdr01$CSF_sTREM2, breaks=20)
+data_cdr01_trem = subset(data_cdr01, CSF_sTREM2 < 5000) #170 obs
+
+
+```
+##DMN
+```{r}
+csf_error_fc_cdr = lm((CSF_sTREM2) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*DMN_x_DMN
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01_trem)
+summary(csf_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01_trem, aes(y = CSF_sTREM2, x = DMN_x_DMN))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual DMN x DMN", y = "CSF sTREM2") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.15, .95), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##SAL
+```{r}
+csf_error_fc_cdr = lm((CSF_sTREM2) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*SAL_x_SAL
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01_trem)
+summary(csf_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01_trem, aes(y = CSF_sTREM2, x = SAL_x_SAL))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual SAL x SAL", y = "CSF sTREM2") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.15, .95), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##DAN
+```{r}
+csf_error_fc_cdr = lm((CSF_sTREM2) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*DAN_x_DAN
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01_trem)
+summary(csf_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01_trem, aes(y = CSF_sTREM2, x = DAN_x_DAN))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual DAN x DAN", y = "CSF sTREM2") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.15, .95), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##CO
+```{r}
+csf_error_fc_cdr = lm((CSF_sTREM2) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*CO_x_CO
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01_trem)
+summary(csf_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01_trem, aes(y = CSF_sTREM2, x = CO_x_CO))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual CO x CO", y = "CSF sTREM2") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.15, .95), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
+
+##FP
+```{r}
+csf_error_fc_cdr = lm((CSF_sTREM2) ~ #lumi_ab42_dr17
+                     #agegap_fc2*group_multi
+                     #agegap_fc2*control
+                      AmyloidTauCategory*FP_x_FP
+                     # agegap_fc2*impaired
+                     #+ HippocampusVol_dr16*group_multi
+                     #+ ADCortSig_thickness_dr16*group_multi
+                     + age_tau
+                     #+ APOE_Pos
+                     + GENDER
+                     + EDUC
+                     + mean_FD_pre_threshold
+                            #error_fc*group_multi #+Sex + Race + Edu
+                   , data = data_cdr01_trem)
+summary(csf_error_fc_cdr)
+#Calculate effect sizes of regression model terms
+
+#etasq(cog_error_fc_cdr)
+
+#Plot relationships between cognition and FC measure
+##Subgroup-specific relationships in colors
+##Overall cross-sectional main effect in black
+
+g = ggplot(data_cdr01_trem, aes(y = CSF_sTREM2, x = FP_x_FP))
+g + geom_point(aes(color = AmyloidTauCategory)) +
+  labs(title="", x = "Residual FP x FP", y = "CSF sTREM2") +
+  geom_smooth(aes(color = AmyloidTauCategory, fill = AmyloidTauCategory), method = glm) +
+  geom_smooth(color = 'black', method = glm, linetype = 'dashed') +
+  scale_color_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  scale_fill_manual(values = c("blue", "forestgreen", "yellow", "orange", "red")) +
+  #geom_vline(xintercept = 0, linetype = "longdash") +
+  #geom_vline(yintercept = 1.42, linetype = "longdash") +
+  #xlim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  #ylim(min(c(data$Age, yscale)), max(c(data$Age, yscale))) +
+  theme_bw(base_size = 15) +
+  theme(legend.position=c(.15, .95), plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.key = element_blank(), legend.background=element_blank())
+```
 
 #End
 

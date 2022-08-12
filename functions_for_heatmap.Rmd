@@ -33,7 +33,7 @@ bcyr = colorRampPalette(c("blue","cyan", "yellow", "red"))(256)
 bwr = colorRampPalette(c("blue", "white", "red"))(256)
 #rs_fcmatrix = as.matrix(rs_fcmat[,2:14])
 #rownames(rs_fcmatrix) = 
-
+ry = colorRampPalette(c("red", "yellow"))(256)
 #png("rs_fcmat_254_bwr.png", height = 400, width = 400)
 #png("rs_fcmat_254_bcyor.png", height = 400, width = 400)
 png("rs_fcmat_254_bcyr.png", height = 400, width = 400) #used to save file to png output
@@ -85,46 +85,15 @@ dim <- c('na', 'sm', 'sm_lat', 'co', 'aud', 'dmn', 'mem',
 
 ```
 
-#define functions
+#create functions
 ```{r}
+
 ### initialize matrix ###
 make_hm <- function() {
   new_matrix <- empty_matrix
   colnames(new_matrix) <- dim
   row.names(new_matrix) <- dim
   return( new_matrix)
-}
-
-### run models for raw values ###
-run_model3 <- function(dep.var) {
-    fml <- reformulate(c("Centiloid_merge", "Tauopathy", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
-    lm(fml, data=hm_final)
-}
-
-run_model4 <- function(dep.var) {
-    fml <- reformulate(c("Centiloid_merge*Tauopathy", "Centiloid_merge", "Tauopathy", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
-    lm(fml, data=hm_final)
-}
-
-run_model5 <- function(dep.var) {
-    fml <- reformulate(c("centCategory*Tauopathy", "centCategory", "Tauopathy", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
-    lm(fml, data=hm_final)
-}
-
-### run models for log values ###
-run_logmodel3 <- function(dep.var) {
-    fml <- reformulate(c("logCentiloidplus", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
-    lm(fml, data=hm_final)
-}
-
-run_logmodel4 <- function(dep.var) {
-    fml <- reformulate(c("logCentiloidplus*logTau", "logCentiloidplus", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
-    lm(fml, data=hm_final)
-}
-
-run_logmodel5 <- function(dep.var) {
-    fml <- reformulate(c("centCategory*logTau", "centCategory", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
-    lm(fml, data=hm_final)
 }
 
 ### convert summary to table ###
@@ -135,238 +104,388 @@ convert_tbl <- function(tbl) {
 }
 ```
 
-
-#model 3: heatmap of centiloid and tau (main effects only)
+#LOG petmr data analyis
 ```{r}
-# LM SUMMARIES #
+### run models for log values ###
+run_log_petmr1 <- function(dep.var) {
+    fml <- reformulate(c("logCentiloidplus", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
 
-### raw values ###
-raw_model3 <- sapply(dep.vars, run_model3, simplify = FALSE)
-rm3_summaries <- lapply(raw_model3, summary)
-rm3_summaries$NA_x_NA #sanity check
+run_log_petmr2 <- function(dep.var) {
+    fml <- reformulate(c("logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
 
-### log values ###
-log_model3 <- sapply(dep.vars, run_logmodel3, simplify = FALSE)
-lm3_summaries <- lapply(log_model3, summary)
-lm3_summaries$NA_x_NA #sanity check
+run_log_petmr3 <- function(dep.var) {
+    fml <- reformulate(c("logCentiloidplus", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
 
-# POPULATE HEATMAP MATRICES #
-hm_raw_m3 <- make_hm()
-hm_log_m3 <- make_hm()
+run_log_petmr4 <- function(dep.var) {
+    fml <- reformulate(c("logCentiloidplus*logTau", "logCentiloidplus", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
 
-hm_raw_m3_tau <- make_hm()
-hm_log_m3_tau <- make_hm()
+run_log_petmr5 <- function(dep.var) {
+    fml <- reformulate(c("centCategory*logTau", "centCategory", "logTau", "age_tau", "EDUC", "GENDER", "mean_FD_pre_threshold"), dep.var)
+    lm(fml, data=hm_final)
+}
+
+#run functions
+petmr_log1 <- sapply(dep.vars, run_log_petmr1, simplify = FALSE)
+pl1_summaries <- lapply(petmr_log1, summary)
+
+petmr_log2 <- sapply(dep.vars, run_log_petmr2, simplify = FALSE)
+pl2_summaries <- lapply(petmr_log2, summary)
+
+petmr_log3 <- sapply(dep.vars, run_log_petmr3, simplify = FALSE)
+pl3_summaries <- lapply(petmr_log3, summary)
+
+petmr_log4 <- sapply(dep.vars, run_log_petmr4, simplify = FALSE)
+pl4_summaries <- lapply(petmr_log4, summary)
+
+petmr_log5 <- sapply(dep.vars, run_log_petmr5, simplify = FALSE)
+pl5_summaries <- lapply(petmr_log5, summary)
+
+
+```
+
+#LOGPETMR LARGE TABLE
+```{r}
+petmr_log_stat_table <- data.frame(matrix(ncol = 210, nrow = 6))
+colnames(petmr_log_stat_table)[seq(1,ncol(petmr_log_stat_table),1)] <- c("t-stat","p-val")
+
+num_networks = 105
+# #model 1: centiloid
+for (i in 1:num_networks) {
+  index = i * 2
+  lm <- convert_tbl(petmr_log1[[i]])
+  t_val <- lm[2,4]
+  petmr_log_stat_table[1,index-1] = t_val
+  p_val <- lm[2,5]
+  petmr_log_stat_table[1,index] = p_val
+    }
+# #model 2: tau
+for (i in 1:num_networks) {
+  index = i * 2
+  lm <- convert_tbl(petmr_log2[[i]])
+  t_val <- lm[2,4]
+  petmr_log_stat_table[2,index-1] = t_val
+  p_val <- lm[2,5]
+  petmr_log_stat_table[2,index] = p_val
+    }
+
+#model 3: centiloid and tau
+for (i in 1:num_networks) {
+  index = i * 2
+  lm <- convert_tbl(petmr_log3[[i]])
+  t_val_cent <- lm[2,4]
+  petmr_log_stat_table[3,index-1] = t_val_cent
+  t_val_tau <- lm[3,4]
+  petmr_log_stat_table[4,index-1] = t_val_tau
+  
+  p_val_cent <- lm[2,5]
+  petmr_log_stat_table[3,index] = p_val_cent
+  p_val_tau <- lm[3,5]
+  petmr_log_stat_table[4,index] = p_val_tau
+    }
+#model 4: continuous interaction
+for (i in 1:num_networks) {
+  index = i * 2
+  lm <- convert_tbl(petmr_log4[[i]])
+  t_val <- lm[8,4]
+  petmr_log_stat_table[5,index-1] = t_val
+  p_val <- lm[8,5]
+  petmr_log_stat_table[5,index] = p_val
+    }
+#model 5: binarized interaction
+for (i in 1:num_networks) {
+  index = i * 2
+  lm <- convert_tbl(petmr_log5[[i]])
+  t_val <- lm[8,4]
+  petmr_log_stat_table[6,index-1] = t_val
+  p_val <- lm[8,5]
+  petmr_log_stat_table[6,index] = p_val
+    }
+```
+
+#t-value matrices
+
+```{r}
+petmr_tval1l <- make_hm() #log data
+petmr_tval2l <- make_hm()
+petmr_tval3lcent <- make_hm()
+petmr_tval3ltau <- make_hm()
+petmr_tval4l <- make_hm()
+petmr_tval5l <- make_hm()
+
 
 ### extract centiloid t-statistics from raw models ###
+## model 1 ##
+# log data #
 for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
+  index = -i^2 + 31*i - 29
   for (j in 1:ncol(empty_matrix)){
     if (i == j) {
-      lm <- convert_tbl(raw_model3[[index]])
-      t_val <- lm[2,4]
-      hm_raw_m3[i, j] = t_val
+      t_val <- petmr_log_stat_table[1,index]
+      petmr_tval1l[i,j] = t_val
    }
     if (i < j) {
-      update_index = index + j - i
-      hm_raw_m3[i,j] = update_index
-      lm <- convert_tbl(raw_model3[[update_index]])
-      t_val <- lm[2,4]
-      hm_raw_m3[i,j] = t_val
-      hm_raw_m3[j,i] = hm_raw_m3[i,j]
+      update_index = index - 2*i + 2*j
+      t_val <- petmr_log_stat_table[1,update_index]
+      petmr_tval1l[i,j] = t_val
+      petmr_tval1l[j,i] = petmr_tval1l[i,j]
     }
   }
 }
 
-### extract centiloid t-statistics from log models ###
+## model 2 ##
+# log #
 for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
+  index = -i^2 + 31*i - 29
   for (j in 1:ncol(empty_matrix)){
     if (i == j) {
-      lm <- convert_tbl(log_model3[[index]])
-      t_val <- lm[2,4]
-      hm_log_m3[i, j] = t_val
+      t_val <- petmr_log_stat_table[2,index]
+      petmr_tval2l[i,j] = t_val
    }
     if (i < j) {
-      update_index = index + j - i
-      hm_log_m3[i,j] = update_index
-      lm <- convert_tbl(log_model3[[update_index]])
-      t_val <- lm[2,4]
-      hm_log_m3[i,j] = t_val
-      hm_log_m3[j,i] = hm_log_m3[i,j]
+      update_index = index - 2*i + 2*j
+      t_val <- petmr_log_stat_table[2,update_index]
+      petmr_tval2l[i,j] = t_val
+      petmr_tval2l[j,i] = petmr_tval2l[i,j]
     }
   }
 }
 
-### extract tau t-statistics from raw models ###
+## model3 ##
+# log centiloid #
 for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
+  index = -i^2 + 31*i - 29
   for (j in 1:ncol(empty_matrix)){
     if (i == j) {
-      lm <- convert_tbl(raw_model3[[index]])
-      t_val <- lm[3,4]
-      hm_raw_m3_tau[i, j] = t_val
+      t_val <- petmr_log_stat_table[3,index]
+      petmr_tval3lcent[i,j] = t_val
    }
     if (i < j) {
-      update_index = index + j - i
-      hm_raw_m3_tau[i,j] = update_index
-      lm <- convert_tbl(raw_model3[[update_index]])
-      t_val <- lm[3,4]
-      hm_raw_m3_tau[i,j] = t_val
-      hm_raw_m3_tau[j,i] = hm_raw_m3_tau[i,j]
+      update_index = index - 2*i + 2*j
+      t_val <- petmr_log_stat_table[3,update_index]
+      petmr_tval3lcent[i,j] = t_val
+      petmr_tval3lcent[j,i] = petmr_tval3lcent[i,j]
+    }
+  }
+}
+# log tau #
+for (i in 1:nrow(empty_matrix)) {
+  index = -i^2 + 31*i - 29
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      t_val <- petmr_log_stat_table[4,index]
+      petmr_tval3ltau[i,j] = t_val
+   }
+    if (i < j) {
+      update_index = index - 2*i + 2*j
+      t_val <- petmr_log_stat_table[4,update_index]
+      petmr_tval3ltau[i,j] = t_val
+      petmr_tval3ltau[j,i] = petmr_tval3ltau[i,j]
     }
   }
 }
 
-### extract tau t-statistics from log models ###
+## model 4 ##
+# log A x T interaction #
 for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
+  index = -i^2 + 31*i - 29
   for (j in 1:ncol(empty_matrix)){
     if (i == j) {
-      lm <- convert_tbl(log_model3[[index]])
-      t_val <- lm[3,4]
-      hm_log_m3_tau[i, j] = t_val
+      t_val <- petmr_log_stat_table[5,index]
+      petmr_tval4l[i,j] = t_val
    }
     if (i < j) {
-      update_index = index + j - i
-      hm_log_m3_tau[i,j] = update_index
-      lm <- convert_tbl(log_model3[[update_index]])
-      t_val <- lm[3,4]
-      hm_log_m3_tau[i,j] = t_val
-      hm_log_m3_tau[j,i] = hm_log_m3_tau[i,j]
+      update_index = index - 2*i + 2*j
+      t_val <- petmr_log_stat_table[5,update_index]
+      petmr_tval4l[i,j] = t_val
+      petmr_tval4l[j,i] = petmr_tval4l[i,j]
     }
   }
 }
+
+## model 5 - binarized interaction effect ##
+# log data #
+for (i in 1:nrow(empty_matrix)) {
+  index = -i^2 + 31*i - 29
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      t_val <- petmr_log_stat_table[6,index]
+      petmr_tval5l[i,j] = t_val
+   }
+    if (i < j) {
+      update_index = index - 2*i + 2*j
+      t_val <- petmr_log_stat_table[6,update_index]
+      petmr_tval5l[i,j] = t_val
+      petmr_tval5l[j,i] = petmr_tval5l[i,j]
+    }
+  }
+}
+
 ```
 
-#model 4: heatmap of continuous interaction
-```{r}
-### raw values ###
-raw_model4 <- sapply(dep.vars, run_model4, simplify = FALSE)
-rm4_summaries <- lapply(raw_model4, summary)
-rm4_summaries$NA_x_NA #sanity check
-
-### log values ###
-log_model4 <- sapply(dep.vars, run_logmodel4, simplify = FALSE)
-lm4_summaries <- lapply(log_model4, summary)
-lm4_summaries$DMN_x_DMN #sanity check
-
-# POPULATE HEATMAP MATRICES #
-hm_raw_m4 <- make_hm()
-hm_log_m4 <- make_hm()
-
-### extract centiloid*tau interaction t-statistic from raw models ###
-for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
-  for (j in 1:ncol(empty_matrix)){
-    if (i == j) {
-      lm <- convert_tbl(raw_model4[[index]])
-      t_val <- lm[2,4]
-      hm_raw_m4[i, j] = t_val
-   }
-    if (i < j) {
-      update_index = index + j - i
-      hm_raw_m4[i,j] = update_index
-      lm <- convert_tbl(raw_model4[[update_index]])
-      t_val <- lm[2,4]
-      hm_raw_m4[i,j] = t_val
-      hm_raw_m4[j,i] = hm_raw_m4[i,j]
-    }
-  }
-}
-
-### extract centiloid*tau interaction t-statistic from log models ###
-for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
-  for (j in 1:ncol(empty_matrix)){
-    if (i == j) {
-      lm <- convert_tbl(log_model4[[index]])
-      t_val <- lm[2,4]
-      hm_log_m4[i, j] = t_val
-   }
-    if (i < j) {
-      update_index = index + j - i
-      hm_log_m4[i,j] = update_index
-      lm <- convert_tbl(log_model4[[update_index]])
-      t_val <- lm[2,4]
-      hm_log_m4[i,j] = t_val
-      hm_log_m4[j,i] = hm_log_m4[i,j]
-    }
-  }
-}
-```
-
-#model 5: heatmap of binarized interaction
+#p-value matrices
 
 ```{r}
-### raw values ###
-raw_model5 <- sapply(dep.vars, run_model5, simplify = FALSE)
-rm5_summaries <- lapply(raw_model5, summary)
-rm5_summaries$NA_x_NA #sanity check
 
-### log values ###
-log_model5 <- sapply(dep.vars, run_logmodel5, simplify = FALSE)
-lm5_summaries <- lapply(log_model5, summary)
-lm5_summaries$DMN_x_DMN #sanity check
+### p-values ###
 
-# POPULATE HEATMAP MATRICES #
-hm_raw_m5 <- make_hm()
-hm_log_m5 <- make_hm()
+petmr_pval3lcent <- make_hm()
+petmr_pval3ltau <- make_hm()
+petmr_pval4l <- make_hm()
+petmr_pval5l <- make_hm()
 
-### extract centiloid(category)*tau interaction t-statistic from raw models ###
+### model 3 log ###
+# log centiloid #
 for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
+  index = -i^2 + 31*i - 29
   for (j in 1:ncol(empty_matrix)){
     if (i == j) {
-      lm <- convert_tbl(raw_model5[[index]])
-      t_val <- lm[2,4]
-      hm_raw_m5[i, j] = t_val
+      t_val <- petmr_log_stat_table[3,index+1]
+      petmr_pval3lcent[i,j] = t_val
    }
     if (i < j) {
-      update_index = index + j - i
-      hm_raw_m5[i,j] = update_index
-      lm <- convert_tbl(raw_model5[[update_index]])
-      t_val <- lm[2,4]
-      hm_raw_m5[i,j] = t_val
-      hm_raw_m5[j,i] = hm_raw_m5[i,j]
+      update_index = index + 1 - 2*i + 2*j
+      t_val <- petmr_log_stat_table[3,update_index]
+      petmr_pval3lcent[i,j] = t_val
+      petmr_pval3lcent[j,i] = petmr_pval3lcent[i,j]
     }
   }
 }
 
-### extract centiloid(category)*tau interaction t-statistic from log models ###
+# log tau #
 for (i in 1:nrow(empty_matrix)) {
-  index = 0.5 * (-i^2 + 31*i - 28)
+  index = -i^2 + 31*i - 29
   for (j in 1:ncol(empty_matrix)){
     if (i == j) {
-      lm <- convert_tbl(log_model5[[index]])
-      t_val <- lm[2,4]
-      hm_log_m5[i, j] = t_val
+      t_val <- petmr_log_stat_table[4,index+1]
+      petmr_pval3ltau[i,j] = t_val
    }
     if (i < j) {
-      update_index = index + j - i
-      hm_log_m5[i,j] = update_index
-      lm <- convert_tbl(log_model5[[update_index]])
-      t_val <- lm[2,4]
-      hm_log_m5[i,j] = t_val
-      hm_log_m5[j,i] = hm_log_m5[i,j]
+      update_index = index + 1 - 2*i + 2*j
+      t_val <- petmr_log_stat_table[4,update_index]
+      petmr_pval3ltau[i,j] = t_val
+      petmr_pval3ltau[j,i] = petmr_pval3ltau[i,j]
+    }
+  }
+}
+
+### model 4 ###
+# log A x T interaction #
+for (i in 1:nrow(empty_matrix)) {
+  index = -i^2 + 31*i - 29
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      t_val <- petmr_log_stat_table[5,index+1]
+      petmr_pval4l[i,j] = t_val
+   }
+    if (i < j) {
+      update_index = index + 1 - 2*i + 2*j
+      t_val <- petmr_log_stat_table[5,update_index]
+      petmr_pval4l[i,j] = t_val
+      petmr_pval4l[j,i] = petmr_pval4l[i,j]
+    }
+  }
+}
+
+### model 5 ###
+# log A x T binarized #
+for (i in 1:nrow(empty_matrix)) {
+  index = -i^2 + 31*i - 29
+  for (j in 1:ncol(empty_matrix)){
+    if (i == j) {
+      t_val <- petmr_log_stat_table[6,index+1]
+      petmr_pval5l[i,j] = t_val
+   }
+    if (i < j) {
+      update_index = index + 1 - 2*i + 2*j
+      t_val <- petmr_log_stat_table[6,update_index]
+      petmr_pval5l[i,j] = t_val
+      petmr_pval5l[j,i] = petmr_pval5l[i,j]
     }
   }
 }
 ```
 
 
-#all models: create csv files
+
+#FDR corrected p value matrices
 ```{r}
-# Write csv files #
-write.csv(hm_raw_m3,file.path(out_path, "m3_raw_centiloid.csv"), row.names = TRUE)
-write.csv(hm_log_m3,file.path(out_path, "m3_log_centiloid.csv"), row.names = TRUE)
-write.csv(hm_raw_m3_tau,file.path(out_path, "m3_raw_tau.csv"), row.names = TRUE)
-write.csv(hm_log_m3_tau,file.path(out_path, "m3_log_tau.csv"), row.names = TRUE)
+#model 3 amyloid
+cpet_3lcent <- petmr_pval3lcent
+for (i in  1:nrow(empty_matrix)){
+  for (j in 1: nrow(empty_matrix)) {
+    if (i > j) {
+      cpet_3lcent[i,j] = 10
+      }
+    }
+  }
+cpet_3lcent <- cpet_3lcent %>%
+  matrix() %>%
+  unlist()
+cpet_3lcent <- cpet_3lcent[ order(cpet_3lcent) ]
+cpet_3lcent <- cpet_3lcent[! (cpet_3lcent >= 1)]
 
-write.csv(hm_raw_m4,file.path(out_path, "m4_raw.csv"), row.names = TRUE)
-write.csv(hm_log_m4,file.path(out_path, "m4_log.csv"), row.names = TRUE)
+p.adjust(cpet_3lcent, method = "fdr", )
 
-write.csv(hm_raw_m5,file.path(out_path, "m5_raw.csv"), row.names = TRUE)
-write.csv(hm_log_m5,file.path(out_path, "m5_log.csv"), row.names = TRUE)
+# model 3 tau
+cpet_3ltau <- petmr_pval3ltau
+for (i in  1:nrow(empty_matrix)){
+  for (j in 1: nrow(empty_matrix)) {
+    if (i > j) {
+      cpet_3ltau[i,j] = 10
+      }
+    }
+  }
+cpet_3ltau <- cpet_3ltau %>%
+  matrix() %>%
+  unlist()
+cpet_3ltau <- cpet_3ltau[ order(cpet_3ltau) ]
+cpet_3ltau <- cpet_3ltau[! (cpet_3ltau >= 1)]
+
+p.adjust(cpet_3ltau, method = "fdr", )
+
+#model 4 continuous
+cpet_4l <- petmr_pval4l
+for (i in  1:nrow(empty_matrix)){
+  for (j in 1: nrow(empty_matrix)) {
+    if (i > j) {
+      cpet_4l[i,j] = 10
+      }
+    }
+  }
+cpet_4l <- cpet_4l %>%
+  matrix() %>%
+  unlist()
+cpet_4l <- cpet_4l[ order(cpet_4l) ]
+cpet_4l <- cpet_4l[! (cpet_4l >= 1)]
+
+p.adjust(cpet_4l, method = "fdr", )
+
+#model 5 binarized
+cpet_5l <- petmr_pval5l
+for (i in  1:nrow(empty_matrix)){
+  for (j in 1: nrow(empty_matrix)) {
+    if (i > j) {
+      cpet_5l[i,j] = 10
+      }
+    }
+  }
+cpet_5l <- cpet_5l %>%
+  matrix() %>%
+  unlist()
+cpet_5l <- cpet_5l[ order(cpet_5l) ]
+cpet_5l <- cpet_5l[! (cpet_5l >= 1)]
+
+p.adjust(cpet_5l, method = "fdr", )
+ 
+
 ```
 
 
